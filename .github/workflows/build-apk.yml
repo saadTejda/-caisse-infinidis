@@ -5,6 +5,9 @@ on:
     branches: [main]
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -46,3 +49,12 @@ jobs:
           name: caisse-infinidis-apk
           path: caisse-infinidis-${{ github.run_number }}.apk
           retention-days: 30
+
+      - name: Publication (téléchargement direct sur la tablette)
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v1.0.${{ github.run_number }}
+          name: Caisse INFINIDIS 1.0.${{ github.run_number }}
+          body: Ouvrez cette page sur la tablette et touchez le fichier .apk pour l'installer.
+          files: caisse-infinidis-${{ github.run_number }}.apk
+          make_latest: true

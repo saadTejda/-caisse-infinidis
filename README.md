@@ -6,8 +6,8 @@ Application caisse pour INFINIDIS Gestion : tablette et téléphone, en ligne et
 
 1. Envoyer ce dossier dans un dépôt GitHub (branche `main`).
 2. Onglet **Actions** → « APK caisse » : la construction démarre seule à chaque envoi (ou bouton **Run workflow**).
-3. À la fin (≈ 10 min), ouvrir l'exécution → **Artifacts** → `caisse-infinidis-apk` (fichier zip contenant l'APK).
-4. Copier l'APK sur la tablette, l'ouvrir et autoriser « Installer des applications inconnues ».
+3. À la fin (≈ 10 min), sur la tablette : ouvrir `https://github.com/saadTejda/-caisse-infinidis/releases/latest` et toucher le fichier `.apk`.
+4. Autoriser « Installer des applications inconnues » pour le navigateur, puis « Installer » (si Play Protect avertit : « Installer quand même »).
 
 ## Premier lancement
 
