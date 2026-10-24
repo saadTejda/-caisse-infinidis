@@ -36,6 +36,7 @@ class _PosPageState extends State<PosPage> {
   int _tab = 0;
   bool _paying = false;
   String? _seenSync;
+  int _seenCatalog = 0;
   Timer? _debounce;
 
   @override
@@ -56,8 +57,9 @@ class _PosPageState extends State<PosPage> {
   }
 
   void _onApp() {
-    if (app.lastSync != _seenSync) {
+    if (app.lastSync != _seenSync || app.catalogVersion != _seenCatalog) {
       _seenSync = app.lastSync;
+      _seenCatalog = app.catalogVersion;
       _loadProducts();
     }
     if (mounted) setState(() {});

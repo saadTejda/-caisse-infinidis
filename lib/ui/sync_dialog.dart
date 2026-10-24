@@ -17,6 +17,7 @@ class _SyncDialogState extends State<_SyncDialog> {
   String? _result;
   bool _error = false;
   int _products = 0;
+  int _images = 0;
   int _contacts = 0;
 
   @override
@@ -28,10 +29,12 @@ class _SyncDialogState extends State<_SyncDialog> {
   Future<void> _countLocal() async {
     final db = AppState.instance.db;
     final p = await db.productCount();
+    final i = await db.productImageCount();
     final c = await db.contactCount();
     if (mounted) {
       setState(() {
         _products = p;
+        _images = i;
         _contacts = c;
       });
     }
@@ -103,7 +106,7 @@ class _SyncDialogState extends State<_SyncDialog> {
             mainAxisSize: MainAxisSize.min,
             children: [
               _action('all', Icons.sync, 'Tout synchroniser', 'Ventes en attente, caisse, produits et contacts'),
-              _action('products', Icons.inventory_2_outlined, 'Produits', '$_products produit(s) sur la tablette · prix et stock'),
+              _action('products', Icons.inventory_2_outlined, 'Produits', '$_products produit(s) sur la tablette · $_images avec image · prix et stock'),
               _action('contacts', Icons.people_outline, 'Contacts', '$_contacts contact(s) · nouveaux clients et soldes de crédit'),
               _action('sales', Icons.cloud_upload_outlined, 'Envoyer les ventes', '${app.pending} vente(s) en attente'),
               const SizedBox(height: 8),

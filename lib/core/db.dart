@@ -64,6 +64,9 @@ class LocalDb {
 
   Future<int> productCount() async => Sqflite.firstIntValue(await _db.rawQuery('SELECT COUNT(*) FROM products')) ?? 0;
 
+  Future<int> productImageCount() async =>
+      Sqflite.firstIntValue(await _db.rawQuery("SELECT COUNT(*) FROM products WHERE json LIKE '%\"image_key\":\"%'")) ?? 0;
+
   Future<void> replaceContacts(List<Contact> items) async {
     await _db.transaction((txn) async {
       await txn.delete('contacts');

@@ -41,6 +41,7 @@ class AppState extends ChangeNotifier {
   int pending = 0;
   int errors = 0;
   String? lastSync;
+  int catalogVersion = 0;
   String? syncMessage;
   bool syncing = false;
 
@@ -174,6 +175,8 @@ class AppState extends ChangeNotifier {
       final items = (data['items'] as List? ?? []).map((e) => Product.fromJson(Map<String, dynamic>.from(e))).toList();
       await db.replaceProducts(items);
       count = items.length;
+      catalogVersion++;
+      notifyListeners();
       unawaited(ProductImageStore.instance.prefetch(items));
     });
     return count;
