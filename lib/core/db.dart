@@ -83,6 +83,11 @@ class LocalDb {
     return rows.map((r) => Contact.fromJson(jsonDecode(r['json'] as String) as Map<String, dynamic>)).toList();
   }
 
+  Future<void> saveContact(Contact item) async {
+    await _db.insert('contacts', {'id': item.id, 'name': item.name.toLowerCase(), 'phone': item.phone, 'json': jsonEncode(item.toJson())},
+        conflictAlgorithm: ConflictAlgorithm.replace);
+  }
+
   Future<int> contactCount() async => Sqflite.firstIntValue(await _db.rawQuery('SELECT COUNT(*) FROM contacts')) ?? 0;
 
   Future<void> enqueue({required String uuid, required String localNumber, required Map<String, dynamic> payload, required Map<String, dynamic> ticket}) async {

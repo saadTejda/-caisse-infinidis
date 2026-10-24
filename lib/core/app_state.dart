@@ -187,6 +187,17 @@ class AppState extends ChangeNotifier {
     return count;
   }
 
+  /// Nouveau client (en ligne uniquement) : enregistré sur le serveur puis ajouté aux contacts de l'appareil.
+  Future<Contact> createContact(Map<String, String> fields) async {
+    late Contact contact;
+    await _guard(() async {
+      final data = await api!.post('/contacts', fields);
+      contact = Contact.fromJson(Map<String, dynamic>.from(data['contact'] as Map));
+      await db.saveContact(contact);
+    });
+    return contact;
+  }
+
   /// Synchroniser : ventes en attente d'abord, puis caisse, produits et contacts.
   Future<String> syncAll({bool products = true, bool contacts = true}) async {
     if (syncing) return syncMessage ?? '';
