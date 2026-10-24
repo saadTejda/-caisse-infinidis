@@ -43,7 +43,10 @@ class ProductImageStore {
     if (await file.exists()) return file;
     final app = AppState.instance;
     final api = app.api;
-    if (!app.online || api == null || _missing.contains(key)) return null;
+    if (!app.online || api == null || _missing.contains(key)) {
+      debugPrint('Image produit ${item.variantId} : pas de téléchargement (en ligne=${app.online}, absente=${_missing.contains(key)})');
+      return null;
+    }
     try {
       final response = await http.get(
         Uri.parse('${api.baseUrl}/api/pos/v1/products/${item.variantId}/image'),
@@ -57,6 +60,8 @@ class ProductImageStore {
       final part = File('${file.path}.part');
       await part.writeAsBytes(response.bodyBytes, flush: true);
       await part.rename(file.path);
+      final head = response.bodyBytes.take(8).map((b) => b.toRadixString(16).padLeft(2, '0')).join(' ');
+      debugPrint('Image produit ${item.variantId} : enregistrée, ${response.bodyBytes.length} octets, ${response.headers['content-type']}, début $head');
       updates.value++;
       return file;
     } catch (e) {
@@ -142,7 +147,10 @@ class _ProductThumbState extends State<ProductThumb> {
   }
 
   Future<void> _load() async {
-    if (widget.product.imageKey == null) return;
+    if (widget.product.imageKey == null) {
+      debugPrint('Image produit ${widget.product.variantId} : sans clé d’image');
+      return;
+    }
     final file = await ProductImageStore.instance.get(widget.product);
     if (mounted && file != null && _file?.path != file.path) setState(() => _file = file);
   }
@@ -160,7 +168,10 @@ class _ProductThumbState extends State<ProductThumb> {
       fit: BoxFit.cover,
       cacheWidth: (widget.size * 3).round(),
       gaplessPlayback: true,
-      errorBuilder: (_, __, ___) => placeholder,
+      errorBuilder: (_, error, __) {
+        debugPrint('Image produit ${widget.product.variantId} : illisible ($error), fichier ${_file?.path}');
+        return placeholder;
+      },
     );
   }
 }
