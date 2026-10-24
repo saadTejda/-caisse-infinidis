@@ -48,15 +48,13 @@ jobs:
           target: google_apis
           disable-animations: true
           script: |
-            adb install -r build/app/outputs/flutter-apk/app-release.apk 2>&1 | tee install.txt
-            adb shell pm list packages | grep infinidis | tee -a install.txt
+            adb install -r build/app/outputs/flutter-apk/app-release.apk > install.txt 2>&1; echo "::notice title=Installation::$(tr '\n' ' ' < install.txt)"
             adb logcat -c
-            adb shell monkey -p com.infinidis.infinidis_pos -c android.intent.category.LAUNCHER 1
-            sleep 25
-            adb shell pidof com.infinidis.infinidis_pos | tee -a install.txt || echo "APPLICATION ARRETEE" | tee -a install.txt
+            adb shell monkey -p com.infinidis.infinidis_pos -c android.intent.category.LAUNCHER 1 > /dev/null 2>&1; sleep 25
+            if adb shell pidof com.infinidis.infinidis_pos > /dev/null; then echo "::notice title=Lancement::application en marche"; else echo "::error title=Lancement::application arretee"; fi
             adb exec-out screencap -p > ecran.png
-            adb logcat -d -v time '*:E' > erreurs.txt || true
-            adb shell dumpsys package com.infinidis.infinidis_pos | grep -E "versionName|versionCode|minSdk|targetSdk" | tee -a install.txt
+            adb logcat -d -v brief AndroidRuntime:E flutter:E '*:S' > erreurs.txt 2>&1; echo "::notice title=Erreurs::$(head -c 3000 erreurs.txt | tr '\n' ' ')"
+            adb shell dumpsys package com.infinidis.infinidis_pos > package.txt 2>&1; echo "::notice title=Paquet::$(grep -E 'versionName|versionCode|minSdk|targetSdk' package.txt | tr '\n' ' ')"
 
       - uses: actions/upload-artifact@v4
         if: always()
