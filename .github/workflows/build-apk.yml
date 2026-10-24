@@ -26,7 +26,21 @@ jobs:
           flutter-version: '3.24.5'
           cache: true
 
+      - name: Clé de signature
+        env:
+          CAISSE_KEYSTORE: ${{ secrets.CAISSE_KEYSTORE }}
+        run: |
+          if [ -n "$CAISSE_KEYSTORE" ]; then
+            echo "$CAISSE_KEYSTORE" | base64 -d > "$RUNNER_TEMP/caisse.p12"
+            echo "CAISSE_KEYSTORE_FILE=$RUNNER_TEMP/caisse.p12" >> "$GITHUB_ENV"
+            echo "::notice title=Signature::clé fixe de la caisse"
+          else
+            echo "::warning title=Signature::secret CAISSE_KEYSTORE absent, clé de test (désinstaller avant chaque mise à jour)"
+          fi
+
       - name: Projet Android
+        env:
+          CAISSE_KEYSTORE_PASSWORD: ${{ secrets.CAISSE_KEYSTORE_PASSWORD }}
         run: |
           flutter create --platforms android --org com.infinidis --project-name infinidis_pos .
           rm -f test/widget_test.dart
@@ -39,6 +53,8 @@ jobs:
         run: flutter analyze --no-fatal-infos --no-fatal-warnings lib
 
       - name: Construction des APK (un par type d'appareil)
+        env:
+          CAISSE_KEYSTORE_PASSWORD: ${{ secrets.CAISSE_KEYSTORE_PASSWORD }}
         run: flutter build apk --release --split-per-abi --build-number=${{ github.run_number }}
 
       - name: Renommer

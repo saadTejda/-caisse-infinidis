@@ -11,4 +11,6 @@ test/widget_test.dart
 *.apk
 *.jks
 *.keystore
+*.p12
+SECRET-*.txt
 key.properties

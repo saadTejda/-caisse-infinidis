@@ -1,4 +1,6 @@
-"""Complète le projet Android généré par `flutter create` : autorisations, nom de l'application, version minimale d'Android."""
+"""Complète le projet Android généré par `flutter create` : autorisations, nom de l'application, version minimale d'Android,
+et signature fixe quand CAISSE_KEYSTORE_FILE est défini (sinon la clé de test de Flutter reste utilisée)."""
+import os
 import pathlib
 import re
 
@@ -27,11 +29,43 @@ if "usesCleartextTraffic" not in text:
     text = text.replace("<application", '<application\n        android:usesCleartextTraffic="true"', 1)
 manifest.write_text(text, encoding="utf-8")
 
+signing = bool(os.environ.get("CAISSE_KEYSTORE_FILE"))
+groovy_signing = """    signingConfigs {
+        release {
+            storeFile file(System.getenv("CAISSE_KEYSTORE_FILE"))
+            storePassword System.getenv("CAISSE_KEYSTORE_PASSWORD")
+            keyAlias "caisse"
+            keyPassword System.getenv("CAISSE_KEYSTORE_PASSWORD")
+        }
+    }
+
+"""
+kts_signing = """    signingConfigs {
+        create("release") {
+            storeFile = file(System.getenv("CAISSE_KEYSTORE_FILE"))
+            storePassword = System.getenv("CAISSE_KEYSTORE_PASSWORD")
+            keyAlias = "caisse"
+            keyPassword = System.getenv("CAISSE_KEYSTORE_PASSWORD")
+        }
+    }
+
+"""
+
 for name in ("build.gradle", "build.gradle.kts"):
     gradle = root / "android" / "app" / name
-    if gradle.exists():
-        g = gradle.read_text(encoding="utf-8")
-        g = re.sub(r"minSdk(Version)?\s*=?\s*flutter\.minSdkVersion", "minSdk = 23", g)
-        gradle.write_text(g, encoding="utf-8")
+    if not gradle.exists():
+        continue
+    g = gradle.read_text(encoding="utf-8")
+    g = re.sub(r"minSdk(Version)?\s*=?\s*flutter\.minSdkVersion", "minSdk = 23", g)
+    if signing and "CAISSE_KEYSTORE_FILE" not in g:
+        kts = name.endswith(".kts")
+        g = re.sub(r"(\n\s*buildTypes\s*\{)", "\n" + (kts_signing if kts else groovy_signing).rstrip("\n") + r"\1", g, count=1)
+        if kts:
+            g = g.replace('signingConfigs.getByName("debug")', 'signingConfigs.getByName("release")')
+        else:
+            g = re.sub(r"signingConfig\s*=?\s*signingConfigs\.debug", "signingConfig = signingConfigs.release", g)
+        if "signingConfigs.release" not in g and 'getByName("release")' not in g:
+            raise SystemExit("Signature : bloc release introuvable dans " + name)
+    gradle.write_text(g, encoding="utf-8")
 
-print("Projet Android complété.")
+print("Projet Android complété" + (" (signature fixe)." if signing else " (clé de test)."))
