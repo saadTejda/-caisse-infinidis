@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
@@ -135,6 +136,8 @@ class ProductThumb extends StatefulWidget {
 
 class _ProductThumbState extends State<ProductThumb> {
   File? _file;
+  Uint8List? _bytes;
+  bool _shown = false;
   bool _wasOnline = false;
 
   @override
@@ -158,12 +161,14 @@ class _ProductThumbState extends State<ProductThumb> {
     super.didUpdateWidget(old);
     if (old.product.variantId != widget.product.variantId || old.product.imageKey != widget.product.imageKey) {
       _file = null;
+      _bytes = null;
+      _shown = false;
       _load();
     }
   }
 
   void _retry() {
-    if (_file == null) _load();
+    if (_bytes == null) _load();
   }
 
   void _onApp() {
@@ -181,8 +186,18 @@ class _ProductThumbState extends State<ProductThumb> {
     store._note(widget.product, 'vignette : demande');
     try {
       final file = await store.get(widget.product);
-      store._note(widget.product, 'vignette : ${file == null ? 'aucun fichier' : 'affichage'}${mounted ? '' : ' (écran fermé)'}');
-      if (mounted && file != null && _file?.path != file.path) setState(() => _file = file);
+      if (file == null || _file?.path == file.path) {
+        if (file == null) store._note(widget.product, 'vignette : aucun fichier');
+        return;
+      }
+      final bytes = await file.readAsBytes();
+      store._note(widget.product, 'vignette : ${bytes.length} octets lus${mounted ? '' : ' (écran fermé)'}');
+      if (mounted) {
+        setState(() {
+          _file = file;
+          _bytes = bytes;
+        });
+      }
     } catch (e) {
       store._note(widget.product, 'vignette : erreur $e');
     }
@@ -195,12 +210,21 @@ class _ProductThumbState extends State<ProductThumb> {
       alignment: Alignment.center,
       child: Icon(Icons.inventory_2_outlined, color: Colors.grey.shade400, size: widget.size * .4),
     );
-    if (_file == null) return placeholder;
-    return Image.file(
-      _file!,
+    if (_bytes == null) return placeholder;
+    return Image.memory(
+      _bytes!,
       fit: BoxFit.cover,
+      width: widget.size,
+      height: widget.size,
       cacheWidth: (widget.size * 3).round(),
       gaplessPlayback: true,
+      frameBuilder: (_, child, frame, __) {
+        if (frame != null && !_shown) {
+          _shown = true;
+          ProductImageStore.instance._note(widget.product, 'image affichée');
+        }
+        return child;
+      },
       errorBuilder: (_, error, __) {
         ProductImageStore.instance._note(widget.product, 'image illisible ($error)');
         return placeholder;
