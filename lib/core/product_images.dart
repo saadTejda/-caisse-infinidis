@@ -49,7 +49,9 @@ class ProductImageStore {
   Future<File?> get(Product item) {
     if (item.imageKey == null) return Future.value(null);
     final key = _name(item);
-    return _pending[key] ??= _load(item, key).whenComplete(() => _pending.remove(key));
+    return _pending[key] ??= _load(item, key).whenComplete(() {
+      _pending.remove(key);
+    });
   }
 
   Future<File?> _load(Product item, String key) async {
