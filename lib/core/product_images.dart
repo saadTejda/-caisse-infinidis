@@ -53,6 +53,15 @@ class ProductImageStore {
   }
 
   Future<File?> _load(Product item, String key) async {
+    try {
+      return await _fetch(item, key);
+    } catch (e) {
+      _note(item, 'erreur interne $e');
+      return null;
+    }
+  }
+
+  Future<File?> _fetch(Product item, String key) async {
     final file = File(p.join((await _directory()).path, key));
     if (await file.exists()) {
       _note(item, 'fichier sur la tablette (${await file.length()} octets, début ${_head(await file.openRead(0, 8).first)})');
@@ -166,9 +175,15 @@ class _ProductThumbState extends State<ProductThumb> {
       ProductImageStore.instance._note(widget.product, 'le serveur n’envoie pas d’image pour ce produit');
       return;
     }
-    final file = await ProductImageStore.instance.get(widget.product);
-    ProductImageStore.instance._note(widget.product, 'vignette : ${file == null ? 'aucun fichier' : 'affichage'}${mounted ? '' : ' (écran fermé)'}');
-    if (mounted && file != null && _file?.path != file.path) setState(() => _file = file);
+    final store = ProductImageStore.instance;
+    store._note(widget.product, 'vignette : demande');
+    try {
+      final file = await store.get(widget.product);
+      store._note(widget.product, 'vignette : ${file == null ? 'aucun fichier' : 'affichage'}${mounted ? '' : ' (écran fermé)'}');
+      if (mounted && file != null && _file?.path != file.path) setState(() => _file = file);
+    } catch (e) {
+      store._note(widget.product, 'vignette : erreur $e');
+    }
   }
 
   @override
