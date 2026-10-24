@@ -38,16 +38,21 @@ jobs:
       - name: Vérification du code
         run: flutter analyze --no-fatal-infos --no-fatal-warnings lib
 
-      - name: Construction de l'APK
-        run: flutter build apk --release --build-number=${{ github.run_number }}
+      - name: Construction des APK (un par type d'appareil)
+        run: flutter build apk --release --split-per-abi --build-number=${{ github.run_number }}
 
       - name: Renommer
-        run: mv build/app/outputs/flutter-apk/app-release.apk caisse-infinidis-${{ github.run_number }}.apk
+        run: |
+          n=${{ github.run_number }}
+          out=build/app/outputs/flutter-apk
+          mv $out/app-arm64-v8a-release.apk caisse-infinidis-$n-tablette-64bits.apk
+          mv $out/app-armeabi-v7a-release.apk caisse-infinidis-$n-ancien-32bits.apk
+          ls -lh *.apk
 
       - uses: actions/upload-artifact@v4
         with:
           name: caisse-infinidis-apk
-          path: caisse-infinidis-${{ github.run_number }}.apk
+          path: '*.apk'
           retention-days: 30
 
       - name: Publication (téléchargement direct sur la tablette)
@@ -55,6 +60,8 @@ jobs:
         with:
           tag_name: v1.0.${{ github.run_number }}
           name: Caisse INFINIDIS 1.0.${{ github.run_number }}
-          body: Ouvrez cette page sur la tablette et touchez le fichier .apk pour l'installer.
-          files: caisse-infinidis-${{ github.run_number }}.apk
+          body: |
+            Sur la tablette, touchez le fichier « tablette-64bits » (presque toutes les tablettes et téléphones depuis 2017, dont Lenovo Tab P11).
+            Le fichier « ancien-32bits » est seulement pour les très anciens appareils.
+          files: '*.apk'
           make_latest: true
