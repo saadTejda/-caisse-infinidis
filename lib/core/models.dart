@@ -16,6 +16,7 @@ class Product {
     required this.color,
     required this.storeAvailable,
     required this.depotAvailable,
+    this.imageKey,
   });
 
   final int variantId;
@@ -28,6 +29,7 @@ class Product {
   final String color;
   int storeAvailable;
   final int depotAvailable;
+  final String? imageKey;
 
   String get label => variant.isEmpty ? name : '$name · $variant';
 
@@ -42,6 +44,7 @@ class Product {
         color: (j['color'] ?? '').toString(),
         storeAvailable: toNum(j['store_available']).toInt(),
         depotAvailable: toNum(j['depot_available']).toInt(),
+        imageKey: (j['image_key'] ?? '').toString().isEmpty ? null : j['image_key'].toString(),
       );
 
   Map<String, dynamic> toJson() => {
@@ -55,6 +58,7 @@ class Product {
         'color': color,
         'store_available': storeAvailable,
         'depot_available': depotAvailable,
+        'image_key': imageKey,
       };
 }
 

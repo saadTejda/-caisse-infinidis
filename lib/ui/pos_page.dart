@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import '../core/api.dart';
 import '../core/app_state.dart';
 import '../core/models.dart';
+import '../core/product_images.dart';
 import '../main.dart';
 import '../printing/printer_service.dart';
 import 'contact_picker.dart';
@@ -505,7 +506,7 @@ class _PosPageState extends State<PosPage> {
                     : null)
             : GridView.builder(
                 padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
-                gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(maxCrossAxisExtent: 190, mainAxisExtent: 116, crossAxisSpacing: 8, mainAxisSpacing: 8),
+                gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(maxCrossAxisExtent: 240, mainAxisExtent: 104, crossAxisSpacing: 8, mainAxisSpacing: 8),
                 itemCount: _products.length,
                 itemBuilder: (context, i) => _tile(_products[i], cur),
               ),
@@ -523,6 +524,7 @@ class _PosPageState extends State<PosPage> {
         onTap: () => _add(p),
         child: Row(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
           Container(width: 5, color: _parseColor(p.color) ?? Colors.blueGrey.shade200),
+          SizedBox(width: 88, child: ProductThumb(p, key: ValueKey('${p.variantId}_${p.imageKey}'), size: 88)),
           Expanded(
             child: Padding(
               padding: const EdgeInsets.all(8),
@@ -632,6 +634,8 @@ class _PosPageState extends State<PosPage> {
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
           child: Row(children: [
+            ClipRRect(borderRadius: BorderRadius.circular(6), child: SizedBox(width: 40, height: 40, child: ProductThumb(l.product, size: 40))),
+            const SizedBox(width: 10),
             Expanded(
               child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                 Text(l.product.label, maxLines: 2, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w500)),

@@ -9,6 +9,7 @@ import 'package:uuid/uuid.dart';
 import 'api.dart';
 import 'db.dart';
 import 'models.dart';
+import 'product_images.dart';
 
 /// Résultat d'un encaissement : ticket à imprimer et indication hors ligne.
 class SaleResult {
@@ -112,6 +113,7 @@ class AppState extends ChangeNotifier {
     final name = await client.ping();
     if (serverUrl.isNotEmpty && serverUrl != url) {
       await db.wipe();
+      await ProductImageStore.instance.clear();
       await _secure.delete(key: 'token');
       user = null;
       context = {};
@@ -172,6 +174,7 @@ class AppState extends ChangeNotifier {
       final items = (data['items'] as List? ?? []).map((e) => Product.fromJson(Map<String, dynamic>.from(e))).toList();
       await db.replaceProducts(items);
       count = items.length;
+      unawaited(ProductImageStore.instance.prefetch(items));
     });
     return count;
   }
