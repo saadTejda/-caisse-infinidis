@@ -529,7 +529,7 @@ class _PosPageState extends State<PosPage> {
           builder: (c) => AlertDialog(
             title: Text(p.label),
             content: Text('SKU ${p.sku} · code ${p.barcode}\nStock magasin ${p.storeAvailable} · dépôt ${p.depotAvailable}\n'
-                'Image : ${ProductImageStore.instance.status[p.variantId] ?? (p.imageKey == null ? 'aucune' : 'pas encore chargée')}'),
+                'Clé d’image : ${p.imageKey ?? 'aucune'}\n${ProductImageStore.instance.status(p.variantId) ?? 'pas encore chargée'}'),
             actions: [TextButton(onPressed: () => Navigator.pop(c), child: const Text('Fermer'))],
           ),
         ),

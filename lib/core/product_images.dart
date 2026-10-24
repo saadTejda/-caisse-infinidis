@@ -23,11 +23,15 @@ class ProductImageStore {
   /// Augmente à chaque image enregistrée : les vignettes encore vides réessaient.
   final updates = ValueNotifier<int>(0);
 
-  /// Dernier état connu de l'image de chaque produit (affiché par un appui long sur le produit).
-  final status = <int, String>{};
+  /// Derniers événements de l'image de chaque produit (affichés par un appui long sur le produit).
+  final _history = <int, List<String>>{};
+
+  String? status(int variantId) => _history[variantId]?.join('\n');
 
   void _note(Product item, String message) {
-    status[item.variantId] = message;
+    final list = _history.putIfAbsent(item.variantId, () => []);
+    if (list.isEmpty || list.last != message) list.add(message);
+    if (list.length > 5) list.removeAt(0);
     debugPrint('Image produit ${item.variantId} : $message');
   }
 
@@ -163,6 +167,7 @@ class _ProductThumbState extends State<ProductThumb> {
       return;
     }
     final file = await ProductImageStore.instance.get(widget.product);
+    ProductImageStore.instance._note(widget.product, 'vignette : ${file == null ? 'aucun fichier' : 'affichage'}${mounted ? '' : ' (écran fermé)'}');
     if (mounted && file != null && _file?.path != file.path) setState(() => _file = file);
   }
 
