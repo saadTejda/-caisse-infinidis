@@ -20,6 +20,9 @@ class ProductImageStore {
   final _pending = <String, Future<File?>>{};
   final _missing = <String>{};
 
+  /// Augmente à chaque image enregistrée : les vignettes encore vides réessaient.
+  final updates = ValueNotifier<int>(0);
+
   Future<Directory> _directory() async {
     if (_dir != null) return _dir!;
     final d = Directory(p.join(await getDatabasesPath(), 'product_images'));
@@ -47,14 +50,17 @@ class ProductImageStore {
         headers: {'Authorization': 'Bearer ${api.token}'},
       ).timeout(const Duration(seconds: 20));
       if (response.statusCode != 200 || response.bodyBytes.isEmpty) {
+        debugPrint('Image produit ${item.variantId} : réponse ${response.statusCode} (${response.headers['content-type']})');
         if (response.statusCode == 404) _missing.add(key);
         return null;
       }
       final part = File('${file.path}.part');
       await part.writeAsBytes(response.bodyBytes, flush: true);
       await part.rename(file.path);
+      updates.value++;
       return file;
-    } catch (_) {
+    } catch (e) {
+      debugPrint('Image produit ${item.variantId} : $e');
       return null;
     }
   }
@@ -64,7 +70,8 @@ class ProductImageStore {
     final d = await _directory();
     final keep = {for (final item in items) if (item.imageKey != null) _name(item)};
     await for (final entry in d.list()) {
-      if (entry is File && !keep.contains(p.basename(entry.path))) {
+      final name = p.basename(entry.path);
+      if (entry is File && !name.endsWith('.part') && !keep.contains(name)) {
         try {
           await entry.delete();
         } catch (_) {}
@@ -97,11 +104,22 @@ class ProductThumb extends StatefulWidget {
 
 class _ProductThumbState extends State<ProductThumb> {
   File? _file;
+  bool _wasOnline = false;
 
   @override
   void initState() {
     super.initState();
+    _wasOnline = AppState.instance.online;
+    ProductImageStore.instance.updates.addListener(_retry);
+    AppState.instance.addListener(_onApp);
     _load();
+  }
+
+  @override
+  void dispose() {
+    ProductImageStore.instance.updates.removeListener(_retry);
+    AppState.instance.removeListener(_onApp);
+    super.dispose();
   }
 
   @override
@@ -113,9 +131,20 @@ class _ProductThumbState extends State<ProductThumb> {
     }
   }
 
+  void _retry() {
+    if (_file == null) _load();
+  }
+
+  void _onApp() {
+    final online = AppState.instance.online;
+    if (online && !_wasOnline) _retry();
+    _wasOnline = online;
+  }
+
   Future<void> _load() async {
+    if (widget.product.imageKey == null) return;
     final file = await ProductImageStore.instance.get(widget.product);
-    if (mounted && file != null) setState(() => _file = file);
+    if (mounted && file != null && _file?.path != file.path) setState(() => _file = file);
   }
 
   @override
