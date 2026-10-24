@@ -23,6 +23,14 @@ class ProductImageStore {
   /// Augmente à chaque image enregistrée : les vignettes encore vides réessaient.
   final updates = ValueNotifier<int>(0);
 
+  /// Dernier état connu de l'image de chaque produit (affiché par un appui long sur le produit).
+  final status = <int, String>{};
+
+  void _note(Product item, String message) {
+    status[item.variantId] = message;
+    debugPrint('Image produit ${item.variantId} : $message');
+  }
+
   Future<Directory> _directory() async {
     if (_dir != null) return _dir!;
     final d = Directory(p.join(await getDatabasesPath(), 'product_images'));
@@ -32,6 +40,8 @@ class ProductImageStore {
 
   String _name(Product item) => '${item.variantId}_${item.imageKey}';
 
+  static String _head(List<int> bytes) => bytes.take(8).map((b) => b.toRadixString(16).padLeft(2, '0')).join(' ');
+
   Future<File?> get(Product item) {
     if (item.imageKey == null) return Future.value(null);
     final key = _name(item);
@@ -40,32 +50,33 @@ class ProductImageStore {
 
   Future<File?> _load(Product item, String key) async {
     final file = File(p.join((await _directory()).path, key));
-    if (await file.exists()) return file;
+    if (await file.exists()) {
+      _note(item, 'fichier sur la tablette (${await file.length()} octets, début ${_head(await file.openRead(0, 8).first)})');
+      return file;
+    }
     final app = AppState.instance;
     final api = app.api;
     if (!app.online || api == null || _missing.contains(key)) {
-      debugPrint('Image produit ${item.variantId} : pas de téléchargement (en ligne=${app.online}, absente=${_missing.contains(key)})');
+      _note(item, 'pas de téléchargement (en ligne : ${app.online}, absente du serveur : ${_missing.contains(key)})');
       return null;
     }
+    final url = '${api.baseUrl}/api/pos/v1/products/${item.variantId}/image';
     try {
-      final response = await http.get(
-        Uri.parse('${api.baseUrl}/api/pos/v1/products/${item.variantId}/image'),
-        headers: {'Authorization': 'Bearer ${api.token}'},
-      ).timeout(const Duration(seconds: 20));
+      final response = await http.get(Uri.parse(url), headers: {'Authorization': 'Bearer ${api.token}'}).timeout(const Duration(seconds: 20));
       if (response.statusCode != 200 || response.bodyBytes.isEmpty) {
-        debugPrint('Image produit ${item.variantId} : réponse ${response.statusCode} (${response.headers['content-type']})');
+        final body = String.fromCharCodes(response.bodyBytes.take(120)).replaceAll(RegExp(r'\s+'), ' ');
+        _note(item, 'réponse ${response.statusCode} (${response.headers['content-type']}) : $body · $url');
         if (response.statusCode == 404) _missing.add(key);
         return null;
       }
       final part = File('${file.path}.part');
       await part.writeAsBytes(response.bodyBytes, flush: true);
       await part.rename(file.path);
-      final head = response.bodyBytes.take(8).map((b) => b.toRadixString(16).padLeft(2, '0')).join(' ');
-      debugPrint('Image produit ${item.variantId} : enregistrée, ${response.bodyBytes.length} octets, ${response.headers['content-type']}, début $head');
+      _note(item, 'téléchargée (${response.bodyBytes.length} octets, ${response.headers['content-type']}, début ${_head(response.bodyBytes)})');
       updates.value++;
       return file;
     } catch (e) {
-      debugPrint('Image produit ${item.variantId} : $e');
+      _note(item, 'erreur $e · $url');
       return null;
     }
   }
@@ -148,7 +159,7 @@ class _ProductThumbState extends State<ProductThumb> {
 
   Future<void> _load() async {
     if (widget.product.imageKey == null) {
-      debugPrint('Image produit ${widget.product.variantId} : sans clé d’image');
+      ProductImageStore.instance._note(widget.product, 'le serveur n’envoie pas d’image pour ce produit');
       return;
     }
     final file = await ProductImageStore.instance.get(widget.product);
@@ -169,7 +180,7 @@ class _ProductThumbState extends State<ProductThumb> {
       cacheWidth: (widget.size * 3).round(),
       gaplessPlayback: true,
       errorBuilder: (_, error, __) {
-        debugPrint('Image produit ${widget.product.variantId} : illisible ($error), fichier ${_file?.path}');
+        ProductImageStore.instance._note(widget.product, 'image illisible ($error)');
         return placeholder;
       },
     );

@@ -524,6 +524,15 @@ class _PosPageState extends State<PosPage> {
       clipBehavior: Clip.antiAlias,
       child: InkWell(
         onTap: () => _add(p),
+        onLongPress: () => showDialog(
+          context: context,
+          builder: (c) => AlertDialog(
+            title: Text(p.label),
+            content: Text('SKU ${p.sku} · code ${p.barcode}\nStock magasin ${p.storeAvailable} · dépôt ${p.depotAvailable}\n'
+                'Image : ${ProductImageStore.instance.status[p.variantId] ?? (p.imageKey == null ? 'aucune' : 'pas encore chargée')}'),
+            actions: [TextButton(onPressed: () => Navigator.pop(c), child: const Text('Fermer'))],
+          ),
+        ),
         child: Row(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
           Container(width: 5, color: _parseColor(p.color) ?? Colors.blueGrey.shade200),
           SizedBox(width: 88, child: ProductThumb(p, key: ValueKey('${p.variantId}_${p.imageKey}'), size: 88)),
