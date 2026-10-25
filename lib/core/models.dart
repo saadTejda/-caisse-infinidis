@@ -17,6 +17,7 @@ class Product {
     required this.storeAvailable,
     required this.depotAvailable,
     this.imageKey,
+    this.categoryId,
   });
 
   final int variantId;
@@ -30,6 +31,7 @@ class Product {
   int storeAvailable;
   final int depotAvailable;
   final String? imageKey;
+  final int? categoryId;
 
   String get label => variant.isEmpty ? name : '$name · $variant';
 
@@ -45,6 +47,7 @@ class Product {
         storeAvailable: toNum(j['store_available']).toInt(),
         depotAvailable: toNum(j['depot_available']).toInt(),
         imageKey: (j['image_key'] ?? '').toString().isEmpty ? null : j['image_key'].toString(),
+        categoryId: j['category_id'] == null ? null : toNum(j['category_id']).toInt(),
       );
 
   Map<String, dynamic> toJson() => {
@@ -59,7 +62,25 @@ class Product {
         'store_available': storeAvailable,
         'depot_available': depotAvailable,
         'image_key': imageKey,
+        'category_id': categoryId,
       };
+}
+
+/// Destinataire d'une vente à livrer (création du colis par le serveur).
+class DeliveryInfo {
+  DeliveryInfo({required this.fullName, required this.phone, required this.address, required this.cityId, required this.cityName, this.notes = '', this.shipping = 0});
+
+  final String fullName;
+  final String phone;
+  final String address;
+  final int cityId;
+  final String cityName;
+  final String notes;
+
+  /// Frais d'expédition ajoutés au ticket (0 = offerts).
+  final double shipping;
+
+  Map<String, dynamic> toPayload() => {'full_name': fullName, 'phone': phone, 'address': address, 'city_id': cityId, 'notes': notes};
 }
 
 class Contact {
@@ -104,7 +125,8 @@ class Totals {
 
   static double round2(double v) => (v * 100).roundToDouble() / 100;
 
-  static Totals compute(List<CartLine> lines, {required bool vat, required bool includesTax, String? discountType, double discountValue = 0}) {
+  static Totals compute(List<CartLine> lines,
+      {required bool vat, required bool includesTax, String? discountType, double discountValue = 0, double shipping = 0, double shippingRate = 0}) {
     final gross = lines.fold<double>(0, (s, l) => s + l.gross);
     double discount = 0;
     if (discountType == 'percent') discount = gross * discountValue.clamp(0, 100) / 100;
@@ -118,8 +140,13 @@ class Totals {
       if (rate <= 0) continue;
       tax += includesTax ? net - net / (1 + rate / 100) : net * rate / 100;
     }
-    tax = round2(tax);
-    final total = round2(includesTax || !vat ? gross - discount : gross - discount + tax);
-    return Totals(gross: round2(gross), discount: discount, tax: tax, total: total);
+    final linesTotal = includesTax || !vat ? gross - discount : gross - discount + tax;
+    final ship = shipping > 0 ? shipping : 0.0;
+    double shipTax = 0;
+    if (ship > 0 && vat && shippingRate > 0) {
+      shipTax = includesTax ? ship - ship / (1 + shippingRate / 100) : ship * shippingRate / 100;
+    }
+    final shipTotal = includesTax ? ship : ship + shipTax;
+    return Totals(gross: round2(gross), discount: discount, tax: round2(tax + shipTax), total: round2(linesTotal + shipTotal));
   }
 }

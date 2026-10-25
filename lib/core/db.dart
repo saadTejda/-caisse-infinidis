@@ -13,14 +13,21 @@ class LocalDb {
 
   static Future<LocalDb> open() async {
     final path = p.join(await getDatabasesPath(), 'infinidis_pos.db');
-    final db = await openDatabase(path, version: 1, onCreate: (db, version) async {
-      await db.execute('CREATE TABLE kv (k TEXT PRIMARY KEY, v TEXT NOT NULL)');
-      await db.execute('CREATE TABLE products (variant_id INTEGER PRIMARY KEY, sku TEXT, barcode TEXT, name TEXT, json TEXT NOT NULL)');
-      await db.execute('CREATE INDEX products_codes ON products (barcode, sku)');
-      await db.execute('CREATE TABLE contacts (id INTEGER PRIMARY KEY, name TEXT, phone TEXT, json TEXT NOT NULL)');
-      await db.execute('CREATE TABLE outbox (uuid TEXT PRIMARY KEY, local_number TEXT NOT NULL, payload TEXT NOT NULL, ticket TEXT NOT NULL, '
-          'status TEXT NOT NULL, message TEXT, number TEXT, tries INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL, synced_at TEXT)');
-    });
+    final db = await openDatabase(
+      path,
+      version: 2,
+      onCreate: (db, version) async {
+        await db.execute('CREATE TABLE kv (k TEXT PRIMARY KEY, v TEXT NOT NULL)');
+        await db.execute('CREATE TABLE products (variant_id INTEGER PRIMARY KEY, sku TEXT, barcode TEXT, name TEXT, category_id INTEGER, json TEXT NOT NULL)');
+        await db.execute('CREATE INDEX products_codes ON products (barcode, sku)');
+        await db.execute('CREATE TABLE contacts (id INTEGER PRIMARY KEY, name TEXT, phone TEXT, json TEXT NOT NULL)');
+        await db.execute('CREATE TABLE outbox (uuid TEXT PRIMARY KEY, local_number TEXT NOT NULL, payload TEXT NOT NULL, ticket TEXT NOT NULL, '
+            'status TEXT NOT NULL, message TEXT, number TEXT, tries INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL, synced_at TEXT)');
+      },
+      onUpgrade: (db, from, to) async {
+        if (from < 2) await db.execute('ALTER TABLE products ADD COLUMN category_id INTEGER');
+      },
+    );
     return LocalDb._(db);
   }
 
@@ -38,7 +45,14 @@ class LocalDb {
       await txn.delete('products');
       final batch = txn.batch();
       for (final item in items) {
-        batch.insert('products', {'variant_id': item.variantId, 'sku': item.sku, 'barcode': item.barcode, 'name': item.label.toLowerCase(), 'json': jsonEncode(item.toJson())});
+        batch.insert('products', {
+          'variant_id': item.variantId,
+          'sku': item.sku,
+          'barcode': item.barcode,
+          'name': item.label.toLowerCase(),
+          'category_id': item.categoryId,
+          'json': jsonEncode(item.toJson()),
+        });
       }
       await batch.commit(noResult: true);
     });
@@ -48,11 +62,20 @@ class LocalDb {
     await _db.update('products', {'json': jsonEncode(item.toJson())}, where: 'variant_id = ?', whereArgs: [item.variantId]);
   }
 
-  Future<List<Product>> products({String query = ''}) async {
+  /// Recherche (nom, SKU, code-barres) et filtre de catégorie (0 = produits sans catégorie).
+  Future<List<Product>> products({String query = '', int? categoryId}) async {
     final q = query.trim().toLowerCase();
-    final rows = q.isEmpty
-        ? await _db.query('products', orderBy: 'name', limit: 400)
-        : await _db.query('products', where: 'name LIKE ? OR sku LIKE ? OR barcode LIKE ?', whereArgs: ['%$q%', '%$q%', '%$q%'], orderBy: 'name', limit: 200);
+    final where = <String>[];
+    final args = <Object>[];
+    if (q.isNotEmpty) {
+      where.add('(name LIKE ? OR sku LIKE ? OR barcode LIKE ?)');
+      args.addAll(['%$q%', '%$q%', '%$q%']);
+    }
+    if (categoryId != null) {
+      where.add(categoryId == 0 ? 'category_id IS NULL' : 'category_id = ?');
+      if (categoryId != 0) args.add(categoryId);
+    }
+    final rows = await _db.query('products', where: where.isEmpty ? null : where.join(' AND '), whereArgs: args.isEmpty ? null : args, orderBy: 'name', limit: 400);
     return rows.map((r) => Product.fromJson(jsonDecode(r['json'] as String) as Map<String, dynamic>)).toList();
   }
 

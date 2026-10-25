@@ -3,24 +3,29 @@ import 'package:flutter/material.dart';
 import '../core/app_state.dart';
 import '../core/models.dart';
 import 'contact_picker.dart';
+import 'delivery_dialog.dart';
 import 'session_dialog.dart';
 
 class PaymentResult {
-  PaymentResult(this.payload, this.contact, {required this.cash});
+  PaymentResult(this.payload, this.contact, {required this.cash, required this.totals});
 
-  /// Champs ajoutés à la vente : payments, cash_received, credit.
+  /// Champs ajoutés à la vente : payments, cash_received, credit, et pour une livraison deliver, delivery, shipping.
   final Map<String, dynamic> payload;
   final Contact? contact;
   final bool cash;
+
+  /// Totaux affichés (frais d'expédition compris).
+  final Totals totals;
 }
 
-Future<PaymentResult?> showPayment(BuildContext context, {required double total, Contact? contact}) =>
-    showDialog<PaymentResult>(context: context, barrierDismissible: false, builder: (_) => _PaymentDialog(total: total, contact: contact));
+/// [totalsFor] recalcule les totaux du panier avec les frais d'expédition donnés.
+Future<PaymentResult?> showPayment(BuildContext context, {required Totals Function(double shipping) totalsFor, Contact? contact}) =>
+    showDialog<PaymentResult>(context: context, barrierDismissible: false, builder: (_) => _PaymentDialog(totalsFor: totalsFor, contact: contact));
 
 class _PaymentDialog extends StatefulWidget {
-  const _PaymentDialog({required this.total, this.contact});
+  const _PaymentDialog({required this.totalsFor, this.contact});
 
-  final double total;
+  final Totals Function(double shipping) totalsFor;
   final Contact? contact;
 
   @override
@@ -34,12 +39,16 @@ class _PaymentDialogState extends State<_PaymentDialog> {
   final _refs = {for (final m in _others) m: TextEditingController()};
   Contact? _contact;
   bool _credit = false;
+  DeliveryInfo? _delivery;
+
+  Totals get _totals => widget.totalsFor(_delivery?.shipping ?? 0);
+  double get _total => _totals.total;
 
   @override
   void initState() {
     super.initState();
     _contact = widget.contact;
-    _cash.text = widget.total.toStringAsFixed(2);
+    _cash.text = _total.toStringAsFixed(2);
   }
 
   double _v(TextEditingController c) {
@@ -48,9 +57,9 @@ class _PaymentDialogState extends State<_PaymentDialog> {
   }
 
   double get _nonCash => _others.fold<double>(0, (s, m) => s + _v(_amounts[m]!));
-  double get _cashApplied => (widget.total - _nonCash).clamp(0, _v(_cash)).toDouble();
+  double get _cashApplied => (_total - _nonCash).clamp(0, _v(_cash)).toDouble();
   double get _change => (_v(_cash) - _cashApplied).clamp(0, double.infinity).toDouble();
-  double get _due => Totals.round2(widget.total - _nonCash - _cashApplied);
+  double get _due => Totals.round2(_total - _nonCash - _cashApplied);
 
   Future<void> _toggleCredit(bool on) async {
     final app = AppState.instance;
@@ -63,25 +72,51 @@ class _PaymentDialogState extends State<_PaymentDialog> {
       if (c == null) return;
       _contact = c;
     }
-    setState(() => _credit = on);
+    setState(() {
+      _credit = on;
+      if (on) _delivery = null;
+    });
+  }
+
+  Future<void> _toggleDelivery(bool on) async {
+    if (!on) {
+      setState(() => _delivery = null);
+      return;
+    }
+    final app = AppState.instance;
+    if (!await app.checkOnline()) {
+      if (mounted) await showOnlineRequired(context, 'Connectez-vous à Internet pour créer une livraison : le colis doit être enregistré sur le serveur.');
+      if (!app.online) return;
+    }
+    if (!mounted) return;
+    final info = await showDeliveryForm(context, initial: _delivery, contact: _contact);
+    if (info == null) return;
+    final wasExact = (_v(_cash) - _total).abs() < 0.001;
+    setState(() {
+      _delivery = info;
+      _credit = false;
+      if (wasExact) _cash.text = _total.toStringAsFixed(2);
+    });
   }
 
   Future<void> _validate() async {
     final app = AppState.instance;
-    if (_nonCash > widget.total + 0.001) {
+    if (_nonCash > _total + 0.001) {
       _alert('Les paiements carte, virement et chèque dépassent le total.');
       return;
     }
-    if (_due > 0.001 && !_credit) {
-      _alert('Il manque ${_due.toStringAsFixed(2)} ${app.currency} : complétez le paiement${app.abilities['credit'] == true ? ' ou vendez à crédit' : ''}.');
+    if (_due > 0.001 && !_credit && _delivery == null) {
+      _alert('Il manque ${_due.toStringAsFixed(2)} ${app.currency} : complétez le paiement${app.abilities['credit'] == true ? ', vendez à crédit' : ''} ou cochez « À livrer ».');
       return;
     }
-    if (_credit && _due > 0.001) {
+    if ((_credit && _due > 0.001) || _delivery != null) {
       if (!await app.checkOnline()) {
-        if (mounted) await showOnlineRequired(context, 'Connectez-vous à Internet pour vérifier le crédit du client.');
+        if (mounted) {
+          await showOnlineRequired(context, _delivery != null ? 'Connectez-vous à Internet pour créer la livraison.' : 'Connectez-vous à Internet pour vérifier le crédit du client.');
+        }
         return;
       }
-      if (_contact == null) {
+      if (_credit && _contact == null) {
         _alert('Choisissez le client pour une vente à crédit.');
         return;
       }
@@ -94,9 +129,19 @@ class _PaymentDialogState extends State<_PaymentDialog> {
     Navigator.pop(
       context,
       PaymentResult(
-        {'payments': payments, 'cash_received': _v(_cash).toStringAsFixed(2), 'credit': _credit && _due > 0.001},
+        {
+          'payments': payments,
+          'cash_received': _v(_cash).toStringAsFixed(2),
+          'credit': _credit && _due > 0.001,
+          if (_delivery != null) ...{
+            'deliver': true,
+            'delivery': _delivery!.toPayload(),
+            'shipping': _delivery!.shipping.toStringAsFixed(2),
+          },
+        },
         _contact,
         cash: _cashApplied > 0,
+        totals: _totals,
       ),
     );
   }
@@ -111,8 +156,9 @@ class _PaymentDialogState extends State<_PaymentDialog> {
   Widget build(BuildContext context) {
     final app = AppState.instance;
     final cur = app.currency;
-    final t = widget.total;
+    final t = _total;
     final rounds = <double>{for (final step in [10, 50, 100, 200]) ((t / step).ceil() * step).toDouble()}.where((v) => v > t).take(3);
+    final d = _delivery;
     return AlertDialog(
       title: Row(children: [
         const Expanded(child: Text('Encaisser')),
@@ -167,9 +213,25 @@ class _PaymentDialogState extends State<_PaymentDialog> {
                 ]),
               ),
             const Divider(),
+            SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              value: d != null,
+              onChanged: _toggleDelivery,
+              secondary: const Icon(Icons.local_shipping_outlined),
+              title: const Text('À livrer'),
+              subtitle: Text(d == null
+                  ? (app.online ? 'Le reste sera encaissé à la livraison' : 'Hors ligne : livraison impossible')
+                  : '${d.fullName} · ${d.cityName}${d.shipping > 0 ? ' · expédition ${d.shipping.toStringAsFixed(2)} $cur' : ''}'),
+            ),
+            if (d != null)
+              Align(
+                alignment: Alignment.centerLeft,
+                child: TextButton.icon(onPressed: () => _toggleDelivery(true), icon: const Icon(Icons.edit_outlined, size: 18), label: const Text('Modifier la livraison')),
+              ),
             _line('Rendu monnaie', '${_change.toStringAsFixed(2)} $cur', bold: _change > 0),
-            _line('Reste à payer', '${(_due > 0 ? _due : 0).toStringAsFixed(2)} $cur', color: _due > 0.001 ? Colors.red : null, bold: _due > 0.001),
-            if (app.abilities['credit'] == true) ...[
+            _line(d != null ? 'À encaisser à la livraison' : 'Reste à payer', '${(_due > 0 ? _due : 0).toStringAsFixed(2)} $cur',
+                color: _due > 0.001 && d == null ? Colors.red : null, bold: _due > 0.001),
+            if (app.abilities['credit'] == true && d == null) ...[
               const SizedBox(height: 4),
               SwitchListTile(
                 contentPadding: EdgeInsets.zero,

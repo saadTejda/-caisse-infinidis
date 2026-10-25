@@ -62,6 +62,12 @@ class AppState extends ChangeNotifier {
   List<Map<String, dynamic>> get stores => (context['stores'] as List? ?? []).map((e) => Map<String, dynamic>.from(e)).toList();
   Map<String, String> get methods => Map<String, dynamic>.from(context['methods'] ?? {}).map((k, v) => MapEntry(k, v.toString()));
   String get currency => (pricing['currency'] ?? 'DH').toString();
+  List<Map<String, dynamic>> get categories => (context['categories'] as List? ?? []).map((e) => Map<String, dynamic>.from(e)).toList();
+  List<Map<String, dynamic>> get cities => (context['cities'] as List? ?? []).map((e) => Map<String, dynamic>.from(e)).toList();
+  Map<String, String> get refunds => Map<String, dynamic>.from(context['refunds'] ?? {'cash': 'Espèces', 'voucher': 'Bon d’avoir'}).map((k, v) => MapEntry(k, v.toString()));
+  Map<String, String> get conditions =>
+      Map<String, dynamic>.from(context['conditions'] ?? {'good': 'Bon état (remis en stock)', 'damaged': 'Endommagé'}).map((k, v) => MapEntry(k, v.toString()));
+  double get shippingRate => toNum(pricing['delivery_rate']);
 
   Future<void> _load() async {
     serverUrl = (await db.getValue('server_url') ?? '').toString();
@@ -320,7 +326,7 @@ class AppState extends ChangeNotifier {
         final data = await api!.post('/sales', payload, const Duration(seconds: 30));
         final sale = Map<String, dynamic>.from(data['sale'] as Map);
         await _decrementStock(lines);
-        return SaleResult(_serverTicket(sale), offline: false);
+        return SaleResult(ticketFromSale(sale), offline: false);
       } on ApiException catch (e) {
         if (e.unauthorized) {
           await logout(force: true);
@@ -333,6 +339,9 @@ class AppState extends ChangeNotifier {
     }
     if (credit) {
       throw ApiException('Connectez-vous à Internet pour vérifier le crédit du client.');
+    }
+    if (payment['deliver'] == true) {
+      throw ApiException('Connectez-vous à Internet pour créer la livraison : le colis doit être enregistré sur le serveur.');
     }
     final soldAt = DateTime.now();
     payload['offline'] = true;
@@ -355,22 +364,61 @@ class AppState extends ChangeNotifier {
     }
   }
 
-  Map<String, dynamic> _serverTicket(Map<String, dynamic> sale) => {
+  /// Ticket à imprimer à partir d'une vente du serveur (nouvelle vente ou réimpression).
+  Map<String, dynamic> ticketFromSale(Map<String, dynamic> sale) => {
+        'id': sale['id'],
         'number': sale['number'],
         'date': sale['date'],
         'store': sale['store'],
         'cashier': sale['cashier'],
         'lines': (sale['lines'] as List? ?? []).map((l) => {'label': l['label'], 'quantity': l['quantity'], 'unit_price': l['unit_price'], 'total': l['total']}).toList(),
         'discount': sale['discount'],
+        'shipping': sale['shipping'],
         'total_tax': sale['total_tax'],
         'vat': sale['vat'],
         'total': sale['total'],
         'payments': (sale['payments'] as List? ?? []).map((p) => {'method': p['method'], 'amount': p['amount']}).toList(),
         'change': sale['change'],
         'due': sale['due'],
+        'cod': sale['cod'],
+        'shipment': sale['shipment'],
+        'returned_total': sale['returned_total'],
         'contact': sale['contact'] is Map ? (sale['contact'] as Map)['name'] : null,
         'offline': false,
       };
+
+  Future<Map<String, dynamic>> sessionSales() async {
+    final id = session?['id'];
+    if (id == null) throw ApiException('La caisse n’est pas ouverte.');
+    Map<String, dynamic> data = {};
+    await _guard(() async => data = await api!.get('/session/$id/sales'));
+    return data;
+  }
+
+  Future<Map<String, dynamic>> saleDetail(int id) async {
+    Map<String, dynamic> sale = {};
+    await _guard(() async => sale = Map<String, dynamic>.from((await api!.get('/sale/$id'))['sale'] as Map));
+    return sale;
+  }
+
+  Future<Map<String, dynamic>> returnLookup(String number) async {
+    Map<String, dynamic> sale = {};
+    await _guard(() async => sale = Map<String, dynamic>.from((await api!.get('/returns/lookup', query: {'number': number.trim()}))['sale'] as Map));
+    return sale;
+  }
+
+  /// Retour total ou partiel. Le request_uuid évite tout doublon si l'envoi est répété.
+  Future<Map<String, dynamic>> createReturn(Map<String, dynamic> payload) async {
+    Map<String, dynamic> doc = {};
+    await _guard(() async {
+      final data = await api!.post('/returns', {'store_id': store?['id'], ...payload}, const Duration(seconds: 30));
+      doc = Map<String, dynamic>.from(data['return'] as Map);
+      await syncContext();
+    });
+    return doc;
+  }
+
+  String newUuid() => _uuid.v4();
 
   Map<String, dynamic> _localTicket(String number, DateTime at, List<CartLine> lines, Totals totals, Map<String, dynamic> payment, Contact? contact) {
     final cash = toNum(payment['cash_received']);

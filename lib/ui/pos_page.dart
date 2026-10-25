@@ -9,7 +9,9 @@ import '../core/product_images.dart';
 import '../main.dart';
 import '../printing/printer_service.dart';
 import 'contact_picker.dart';
+import 'history_page.dart';
 import 'payment_sheet.dart';
+import 'return_page.dart';
 import 'pending_page.dart';
 import 'printer_settings.dart';
 import 'scanner_page.dart';
@@ -33,6 +35,7 @@ class _PosPageState extends State<PosPage> {
   Contact? _contact;
   String? _discountType;
   double _discountValue = 0;
+  int? _category;
   int _tab = 0;
   bool _paying = false;
   String? _seenSync;
@@ -75,7 +78,7 @@ class _PosPageState extends State<PosPage> {
   }
 
   Future<void> _loadProducts() async {
-    final items = await app.db.products(query: _search.text);
+    final items = await app.db.products(query: _search.text, categoryId: _category);
     if (mounted) setState(() => _products = items);
   }
 
@@ -93,6 +96,11 @@ class _PosPageState extends State<PosPage> {
       _add(p);
       _search.clear();
       await _loadProducts();
+    } else if (RegExp(r'^T-\d{4}-\d{4,}$', caseSensitive: false).hasMatch(code) && app.abilities['return'] == true) {
+      _search.clear();
+      await _loadProducts();
+      if (!mounted) return;
+      await Navigator.of(context).push(MaterialPageRoute(builder: (_) => ReturnPage(number: code)));
     } else {
       await _loadProducts();
       if (_products.length == 1) {
@@ -144,8 +152,15 @@ class _PosPageState extends State<PosPage> {
     });
   }
 
-  Totals get _totals => Totals.compute(_cart,
-      vat: app.pricing['vat'] == true, includesTax: app.pricing['includes_tax'] != false, discountType: _discountType, discountValue: _discountValue);
+  Totals get _totals => _totalsWith(0);
+
+  Totals _totalsWith(double shipping) => Totals.compute(_cart,
+      vat: app.pricing['vat'] == true,
+      includesTax: app.pricing['includes_tax'] != false,
+      discountType: _discountType,
+      discountValue: _discountValue,
+      shipping: shipping,
+      shippingRate: app.shippingRate);
 
   Future<void> _editQty(CartLine line) async {
     final c = TextEditingController(text: '${line.quantity}');
@@ -209,14 +224,13 @@ class _PosPageState extends State<PosPage> {
       toast(context, 'La caisse n’est pas ouverte.', error: true);
       return;
     }
-    final totals = _totals;
-    final pay = await showPayment(context, total: totals.total, contact: _contact);
+    final pay = await showPayment(context, totalsFor: _totalsWith, contact: _contact);
     if (pay == null || !mounted) return;
     setState(() => _paying = true);
     try {
       final result = await app.checkout(
         lines: _cart,
-        totals: totals,
+        totals: pay.totals,
         payment: pay.payload,
         contact: pay.contact,
         discountType: _discountType,
@@ -273,6 +287,8 @@ class _PosPageState extends State<PosPage> {
           Text('${t['total']} ${app.currency}', style: Theme.of(c).textTheme.headlineMedium?.copyWith(fontWeight: FontWeight.bold)),
           if (toNum(t['change']) > 0) Text('Rendu : ${t['change']} ${app.currency}', style: Theme.of(c).textTheme.titleLarge),
           if (toNum(t['due']) > 0) Text('Reste dû (crédit) : ${t['due']} ${app.currency}'),
+          if (t['shipment'] is Map)
+            Text('À livrer · colis ${(t['shipment'] as Map)['code']} · à encaisser ${t['cod']} ${app.currency}', textAlign: TextAlign.center),
           if (r.message != null) Padding(padding: const EdgeInsets.only(top: 8), child: Text(r.message!, textAlign: TextAlign.center)),
           if (printError != null) Padding(padding: const EdgeInsets.only(top: 8), child: Text('Impression : $printError', style: const TextStyle(color: Colors.red))),
         ]),
@@ -296,6 +312,12 @@ class _PosPageState extends State<PosPage> {
 
   Future<void> _menu(String action) async {
     switch (action) {
+      case 'history':
+        await Navigator.of(context).push(MaterialPageRoute(builder: (_) => const HistoryPage()));
+        await _loadProducts();
+      case 'return':
+        await Navigator.of(context).push(MaterialPageRoute(builder: (_) => const ReturnPage()));
+        await _loadProducts();
       case 'printer':
         await showPrinterSettings(context);
       case 'close':
@@ -385,6 +407,8 @@ class _PosPageState extends State<PosPage> {
               child: const Icon(Icons.cloud_upload_outlined),
             ),
           ),
+          if (session != null)
+            IconButton(tooltip: 'Historique de la caisse', onPressed: () => _menu('history'), icon: const Icon(Icons.receipt_long_outlined)),
           IconButton(
             tooltip: 'Synchroniser',
             onPressed: () => showSyncDialog(context),
@@ -393,6 +417,9 @@ class _PosPageState extends State<PosPage> {
           PopupMenuButton<String>(
             onSelected: _menu,
             itemBuilder: (_) => [
+              if (session != null) const PopupMenuItem(value: 'history', child: ListTile(leading: Icon(Icons.receipt_long_outlined), title: Text('Historique de la caisse'))),
+              if (session != null && app.abilities['return'] == true)
+                const PopupMenuItem(value: 'return', child: ListTile(leading: Icon(Icons.assignment_return_outlined), title: Text('Retour d’articles'))),
               const PopupMenuItem(value: 'printer', child: ListTile(leading: Icon(Icons.print_outlined), title: Text('Imprimante'))),
               if (app.stores.length > 1) const PopupMenuItem(value: 'store', child: ListTile(leading: Icon(Icons.store_outlined), title: Text('Changer de magasin'))),
               if (session != null && app.abilities['open_close'] == true)
@@ -500,9 +527,11 @@ class _PosPageState extends State<PosPage> {
           IconButton.filledTonal(tooltip: 'Scanner avec la caméra', onPressed: _scanCamera, icon: const Icon(Icons.photo_camera_outlined)),
         ]),
       ),
+      if (app.categories.isNotEmpty) _categoryBar(),
       Expanded(
         child: _products.isEmpty
-            ? _empty(Icons.inventory_2_outlined, 'Aucun produit', _search.text.isEmpty ? 'Synchronisez les produits pour remplir la caisse.' : 'Aucun résultat.',
+            ? _empty(Icons.inventory_2_outlined, 'Aucun produit',
+                _search.text.isEmpty && _category == null ? 'Synchronisez les produits pour remplir la caisse.' : 'Aucun résultat.',
                 action: _search.text.isEmpty
                     ? OutlinedButton.icon(onPressed: () => showSyncDialog(context), icon: const Icon(Icons.sync), label: const Text('Synchroniser'))
                     : null)
@@ -514,6 +543,38 @@ class _PosPageState extends State<PosPage> {
               ),
       ),
     ]);
+  }
+
+  /// Filtre par catégorie (sur les produits de la tablette, donc aussi hors ligne).
+  Widget _categoryBar() {
+    Widget chip(int? id, String label, Color? color) {
+      final selected = _category == id;
+      return Padding(
+        padding: const EdgeInsets.only(right: 6),
+        child: ChoiceChip(
+          selected: selected,
+          label: Text(label),
+          avatar: color == null ? null : CircleAvatar(backgroundColor: color, radius: 6),
+          onSelected: (_) {
+            setState(() => _category = id);
+            _loadProducts();
+          },
+        ),
+      );
+    }
+
+    return SizedBox(
+      height: 44,
+      child: ListView(
+        scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.fromLTRB(12, 0, 12, 6),
+        children: [
+          chip(null, 'Toutes', null),
+          for (final c in app.categories) chip((c['id'] as num).toInt(), c['name'].toString(), _parseColor((c['color'] ?? '').toString())),
+          chip(0, 'Sans catégorie', null),
+        ],
+      ),
+    );
   }
 
   Widget _tile(Product p, String cur) {

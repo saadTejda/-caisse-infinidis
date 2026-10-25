@@ -87,6 +87,19 @@ class TicketBuilder {
 
   void hr() => text('-' * cols);
 
+  /// Code-barres CODE128 centré, avec le texte lisible dessous.
+  void barcode(String data) {
+    final value = _clean(data).codeUnits.where((c) => c >= 0x20 && c < 0x7F).toList();
+    if (value.isEmpty || value.length > 40) return;
+    align('center');
+    bytes.addAll([_gs, 0x68, 70]); // hauteur
+    bytes.addAll([_gs, 0x77, value.length > 14 && config.paper < 80 ? 1 : 2]); // largeur du module (58 mm : 384 points)
+    bytes.addAll([_gs, 0x48, 2]); // texte sous le code
+    bytes.addAll([_gs, 0x6B, 73, value.length + 2, 0x7B, 0x42, ...value]);
+    bytes.add(0x0A);
+    align('left');
+  }
+
   void feed(int lines) => bytes.addAll([_esc, 0x64, lines]);
 
   void cut() => bytes.addAll([_gs, 0x56, 0x42, 0x00]);
@@ -250,6 +263,7 @@ class PrinterService {
       }
       t.hr();
       if (toNum(ticket['discount']) > 0) t.pair('Remise', '-${ticket['discount']}');
+      if (toNum(ticket['shipping']) > 0) t.pair('Expédition', ticket['shipping'].toString());
       if (ticket['vat'] == true && toNum(ticket['total_tax']) > 0) t.pair('dont TVA', ticket['total_tax'].toString());
       t.pair('TOTAL $currency', ticket['total'].toString(), strong: true);
       for (final raw in (ticket['payments'] as List? ?? [])) {
@@ -258,12 +272,64 @@ class PrinterService {
       }
       if (toNum(ticket['change']) > 0) t.pair('Rendu', ticket['change'].toString());
       if (toNum(ticket['due']) > 0) t.pair('Reste dû (crédit)', ticket['due'].toString(), strong: true);
+      final shipment = ticket['shipment'];
+      if (shipment is Map) {
+        t.hr();
+        t.text('A LIVRER - colis ${shipment['code']}', strong: true);
+        t.wrap('${shipment['name']} · ${shipment['phone']}');
+        t.wrap('${shipment['address']}${(shipment['city'] ?? '').toString().isNotEmpty ? ', ${shipment['city']}' : ''}');
+        t.pair('A encaisser à la livraison', '${ticket['cod'] ?? '0.00'} $currency', strong: true);
+      }
       t.hr();
       final footer = (company['footer'] ?? '').toString().trim();
       t.text(footer.isNotEmpty ? footer : 'Merci de votre visite', alignTo: 'center');
+      if (ticket['offline'] != true) t.barcode(ticket['number'].toString());
       t.feed(3);
       if (c.cut) t.cut();
     }
+    await send(c, t.bytes);
+  }
+
+  /// Ticket de retour (et bon d'avoir s'il y en a un).
+  Future<void> printReturn(Map<String, dynamic> doc, {bool openDrawer = false}) async {
+    final c = config;
+    if (c == null || !c.ready) throw PrintException('Aucune imprimante réglée : ouvrez « Imprimante » dans le menu.');
+    final app = AppState.instance;
+    final company = app.company;
+    final currency = app.currency;
+    final t = TicketBuilder(c)..init();
+    if (openDrawer && c.drawer) t.drawer();
+    t.text((company['name'] ?? 'INFINIDIS').toString(), alignTo: 'center', strong: true, big: c.paper >= 80);
+    t.text('RETOUR ${doc['number']}', alignTo: 'center', strong: true);
+    t.hr();
+    t.pair('Ticket d’origine', doc['sale_number'].toString());
+    t.pair('Date', (doc['date'] ?? '').toString());
+    if ((doc['store'] ?? '').toString().isNotEmpty) t.text('Magasin : ${doc['store']}');
+    if ((doc['user'] ?? '').toString().isNotEmpty) t.text('Caissier : ${doc['user']}');
+    if (doc['contact'] is Map) t.text('Client : ${(doc['contact'] as Map)['name']}');
+    t.wrap('Motif : ${doc['reason']}');
+    t.hr();
+    for (final raw in (doc['lines'] as List? ?? [])) {
+      final l = Map<String, dynamic>.from(raw as Map);
+      t.wrap(l['label'].toString());
+      t.pair('  ${l['quantity']} x · ${l['condition']}', l['total'].toString());
+    }
+    t.hr();
+    t.pair('TOTAL RETOUR $currency', doc['total'].toString(), strong: true);
+    if (toNum(doc['debt']) > 0) t.pair('Déduit du dû client', doc['debt'].toString());
+    if (toNum(doc['refund']) > 0) t.pair('Remboursé (${doc['refund_label']})', doc['refund'].toString(), strong: true);
+    final voucher = doc['voucher'];
+    if (voucher is Map) {
+      t.hr();
+      t.text('BON D’AVOIR', alignTo: 'center', strong: true, big: c.paper >= 80);
+      t.text('${doc['refund']} $currency', alignTo: 'center', strong: true);
+      if ((voucher['expires_on'] ?? '').toString().isNotEmpty) t.text('Valable jusqu’au ${voucher['expires_on']}', alignTo: 'center');
+      t.barcode(voucher['code'].toString());
+    } else {
+      t.barcode(doc['number'].toString());
+    }
+    t.feed(3);
+    if (c.cut) t.cut();
     await send(c, t.bytes);
   }
 }
