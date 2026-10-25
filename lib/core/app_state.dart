@@ -68,6 +68,8 @@ class AppState extends ChangeNotifier {
   Map<String, String> get conditions =>
       Map<String, dynamic>.from(context['conditions'] ?? {'good': 'Bon état (remis en stock)', 'damaged': 'Endommagé'}).map((k, v) => MapEntry(k, v.toString()));
   double get shippingRate => toNum(pricing['delivery_rate']);
+  Map<String, String> get movements =>
+      Map<String, dynamic>.from(context['movements'] ?? {'expense': 'Dépense', 'in': 'Entrée d’argent', 'out': 'Sortie d’argent'}).map((k, v) => MapEntry(k, v.toString()));
 
   Future<void> _load() async {
     serverUrl = (await db.getValue('server_url') ?? '').toString();
@@ -419,6 +421,19 @@ class AppState extends ChangeNotifier {
   }
 
   String newUuid() => _uuid.v4();
+
+  /// Dépense, entrée ou sortie d'argent (en ligne). Retourne le rapport de caisse à jour.
+  Future<Map<String, dynamic>> cashMovement(String kind, String amount, String reason) async {
+    final id = session?['id'];
+    if (id == null) throw ApiException('La caisse n’est pas ouverte.');
+    Map<String, dynamic> report = {};
+    await _guard(() async {
+      final data = await api!.post('/session/$id/movement', {'kind': kind, 'amount': amount, 'reason': reason});
+      report = Map<String, dynamic>.from(data['report'] as Map);
+      await syncContext();
+    });
+    return report;
+  }
 
   Map<String, dynamic> _localTicket(String number, DateTime at, List<CartLine> lines, Totals totals, Map<String, dynamic> payment, Contact? contact) {
     final cash = toNum(payment['cash_received']);

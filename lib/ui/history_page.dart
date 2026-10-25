@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import '../core/app_state.dart';
 import '../main.dart';
 import '../printing/printer_service.dart';
+import 'movement_dialog.dart';
 import 'return_page.dart';
 import 'session_dialog.dart';
 
@@ -114,7 +115,17 @@ class _HistoryPageState extends State<HistoryPage> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Historique de la caisse'),
-        actions: [IconButton(tooltip: 'Actualiser', onPressed: _loading ? null : _load, icon: const Icon(Icons.refresh))],
+        actions: [
+          if (app.abilities['expense'] == true)
+            TextButton.icon(
+              onPressed: () async {
+                if (await showCashMovement(context)) await _load();
+              },
+              icon: const Icon(Icons.swap_vert),
+              label: const Text('Mouvement'),
+            ),
+          IconButton(tooltip: 'Actualiser', onPressed: _loading ? null : _load, icon: const Icon(Icons.refresh)),
+        ],
       ),
       body: RefreshIndicator(
         onRefresh: _load,
@@ -131,6 +142,9 @@ class _HistoryPageState extends State<HistoryPage> {
                   if (_n(r['returns_count']) > 0) _stat('Retours', '${r['returns_count']} · ${r['returns_total']} $cur'),
                   if (_n(r['cod']) > 0) _stat('À encaisser (livraisons)', '${r['deliveries']} · ${r['cod']} $cur'),
                   if (_n(r['credit']) > 0) _stat('Crédit accordé', '${r['credit']} $cur'),
+                  if (_n(r['expenses']) > 0) _stat('Dépenses', '-${r['expenses']} $cur'),
+                  if (_n(r['cash_in']) > 0) _stat('Entrées d’argent', '+${r['cash_in']} $cur'),
+                  if (_n(r['cash_out']) > 0) _stat('Sorties d’argent', '-${r['cash_out']} $cur'),
                   _stat('Espèces attendues', '${r['expected_cash']} $cur', strong: true),
                 ]),
               ),
@@ -148,6 +162,24 @@ class _HistoryPageState extends State<HistoryPage> {
                 ),
               ]),
             ),
+          if (r != null && (r['movements'] as List? ?? []).isNotEmpty) ...[
+            Padding(
+              padding: const EdgeInsets.fromLTRB(4, 12, 4, 4),
+              child: Text('Mouvements de caisse (${(r['movements'] as List).length})', style: Theme.of(context).textTheme.titleSmall),
+            ),
+            for (final m in (r['movements'] as List))
+              Card(
+                child: ListTile(
+                  dense: true,
+                  leading: Icon(
+                    m['kind'].toString().startsWith('Entrée') ? Icons.south_west : (m['kind'].toString().startsWith('Dépense') ? Icons.receipt_outlined : Icons.north_east),
+                    color: m['kind'].toString().startsWith('Entrée') ? Colors.green : Colors.deepOrange,
+                  ),
+                  title: Text('${m['kind']} · ${m['amount']} $cur'),
+                  subtitle: Text('${m['at']} · ${m['reason']}'),
+                ),
+              ),
+          ],
           if (_pending.isNotEmpty) ...[
             Padding(padding: const EdgeInsets.fromLTRB(4, 12, 4, 4), child: Text('Hors ligne, pas encore envoyées (${_pending.length})', style: Theme.of(context).textTheme.titleSmall)),
             for (final p in _pending) _pendingTile(p),

@@ -290,6 +290,29 @@ class PrinterService {
     await send(c, t.bytes);
   }
 
+  /// Bon de mouvement de caisse (dépense, entrée ou sortie d'argent), avec signature.
+  Future<void> printMovement({required String label, required String amount, required String reason, required String date, bool openDrawer = false}) async {
+    final c = config;
+    if (c == null || !c.ready) throw PrintException('Aucune imprimante réglée : ouvrez « Imprimante » dans le menu.');
+    final app = AppState.instance;
+    final t = TicketBuilder(c)..init();
+    if (openDrawer && c.drawer) t.drawer();
+    t.text((app.company['name'] ?? 'INFINIDIS').toString(), alignTo: 'center', strong: true);
+    t.text(label.toUpperCase(), alignTo: 'center', strong: true, big: c.paper >= 80);
+    t.hr();
+    t.pair('Date', date);
+    if ((app.store?['name'] ?? '').toString().isNotEmpty) t.text('Magasin : ${app.store!['name']}');
+    t.text('Caissier : ${app.user?['name'] ?? ''}');
+    t.wrap('Motif : $reason');
+    t.hr();
+    t.pair('MONTANT ${app.currency}', amount, strong: true);
+    t.feed(2);
+    t.text('Signature :');
+    t.feed(3);
+    if (c.cut) t.cut();
+    await send(c, t.bytes);
+  }
+
   /// Ticket de retour (et bon d'avoir s'il y en a un).
   Future<void> printReturn(Map<String, dynamic> doc, {bool openDrawer = false}) async {
     final c = config;

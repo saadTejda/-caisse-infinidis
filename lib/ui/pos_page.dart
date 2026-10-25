@@ -10,6 +10,7 @@ import '../main.dart';
 import '../printing/printer_service.dart';
 import 'contact_picker.dart';
 import 'history_page.dart';
+import 'movement_dialog.dart';
 import 'payment_sheet.dart';
 import 'return_page.dart';
 import 'pending_page.dart';
@@ -318,6 +319,8 @@ class _PosPageState extends State<PosPage> {
       case 'return':
         await Navigator.of(context).push(MaterialPageRoute(builder: (_) => const ReturnPage()));
         await _loadProducts();
+      case 'movement':
+        await showCashMovement(context);
       case 'printer':
         await showPrinterSettings(context);
       case 'close':
@@ -420,6 +423,8 @@ class _PosPageState extends State<PosPage> {
               if (session != null) const PopupMenuItem(value: 'history', child: ListTile(leading: Icon(Icons.receipt_long_outlined), title: Text('Historique de la caisse'))),
               if (session != null && app.abilities['return'] == true)
                 const PopupMenuItem(value: 'return', child: ListTile(leading: Icon(Icons.assignment_return_outlined), title: Text('Retour d’articles'))),
+              if (session != null && app.abilities['expense'] == true)
+                const PopupMenuItem(value: 'movement', child: ListTile(leading: Icon(Icons.swap_vert), title: Text('Mouvement de caisse (dépense, entrée, sortie)'))),
               const PopupMenuItem(value: 'printer', child: ListTile(leading: Icon(Icons.print_outlined), title: Text('Imprimante'))),
               if (app.stores.length > 1) const PopupMenuItem(value: 'store', child: ListTile(leading: Icon(Icons.store_outlined), title: Text('Changer de magasin'))),
               if (session != null && app.abilities['open_close'] == true)
