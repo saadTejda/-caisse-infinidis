@@ -11,6 +11,7 @@ Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   final state = await AppState.boot();
   await PrinterService.instance.load();
+  PrinterService.instance.startWatch();
   SystemChrome.setPreferredOrientations(DeviceOrientation.values);
   runApp(PosApp(state: state));
 }

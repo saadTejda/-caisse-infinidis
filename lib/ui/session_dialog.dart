@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../core/app_state.dart';
+import '../printing/printer_service.dart';
 
 /// Ouverture de caisse (fond de caisse). Nécessite Internet.
 Future<bool> showOpenSession(BuildContext context) async {
@@ -45,6 +46,7 @@ Future<bool> showOpenSession(BuildContext context) async {
                     });
                     try {
                       await app.openSession(amount.text.replaceAll(',', '.'));
+                      PrinterService.instance.check();
                       if (c.mounted) Navigator.pop(c, true);
                     } catch (e) {
                       setState(() {

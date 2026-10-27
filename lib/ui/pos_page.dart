@@ -50,7 +50,62 @@ class _PosPageState extends State<PosPage> {
     app.addListener(_onApp);
     _loadProducts();
     _startup();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _askPrinter());
   }
+
+  /// Au premier lancement sans imprimante, propose une seule fois de la régler.
+  Future<void> _askPrinter() async {
+    if (PrinterService.instance.config != null || await app.db.getValue('printer_prompted') == true) return;
+    await app.db.setValue('printer_prompted', true);
+    if (!mounted) return;
+    final go = await showDialog<bool>(
+      context: context,
+      builder: (c) => AlertDialog(
+        icon: const Icon(Icons.print_outlined),
+        title: const Text('Imprimante ticket'),
+        content: const Text('Allumez l’imprimante et appairez-la en Bluetooth avec la tablette : le modèle est reconnu tout seul, puis un ticket test vérifie le réglage.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(c, false), child: const Text('Plus tard')),
+          FilledButton(onPressed: () => Navigator.pop(c, true), child: const Text('Régler maintenant')),
+        ],
+      ),
+    );
+    if (go == true && mounted) await showPrinterSettings(context);
+  }
+
+  Future<void> _printerTap() async {
+    final service = PrinterService.instance;
+    if (service.config == null || service.link.value == PrinterLink.connected) {
+      await showPrinterSettings(context);
+      return;
+    }
+    if (service.link.value == PrinterLink.connecting) return;
+    try {
+      final ok = await service.connectNow();
+      if (mounted) toast(context, ok ? 'Imprimante connectée.' : 'Imprimante injoignable : allumez-la et rapprochez-la de la tablette.', error: !ok);
+    } catch (e) {
+      if (mounted) toast(context, e.toString(), error: true);
+    }
+  }
+
+  Widget _printerIcon() => ValueListenableBuilder<PrinterLink>(
+        valueListenable: PrinterService.instance.link,
+        builder: (_, state, __) {
+          final (Color color, IconData icon, String tip) = switch (state) {
+            PrinterLink.connected => (Colors.green, Icons.print, 'Imprimante connectée'),
+            PrinterLink.connecting => (Colors.orange, Icons.print_outlined, 'Connexion à l’imprimante…'),
+            PrinterLink.offline => (Colors.red, Icons.print_disabled_outlined, 'Imprimante déconnectée : touchez pour reconnecter'),
+            PrinterLink.none => (Colors.grey, Icons.print_disabled_outlined, 'Aucune imprimante : touchez pour la régler'),
+          };
+          return IconButton(
+            tooltip: tip,
+            onPressed: _printerTap,
+            icon: state == PrinterLink.connecting
+                ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.orange))
+                : Icon(icon, color: color),
+          );
+        },
+      );
 
   @override
   void dispose() {
@@ -410,6 +465,7 @@ class _PosPageState extends State<PosPage> {
               child: const Icon(Icons.cloud_upload_outlined),
             ),
           ),
+          _printerIcon(),
           if (session != null)
             IconButton(tooltip: 'Historique de la caisse', onPressed: () => _menu('history'), icon: const Icon(Icons.receipt_long_outlined)),
           IconButton(

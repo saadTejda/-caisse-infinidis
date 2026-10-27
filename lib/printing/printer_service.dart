@@ -1,5 +1,7 @@
+import 'dart:async';
 import 'dart:io';
 
+import 'package:flutter/widgets.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:print_bluetooth_thermal/print_bluetooth_thermal.dart';
 
@@ -30,7 +32,7 @@ class TicketBuilder {
 
   void init() {
     bytes.addAll([_esc, 0x40]);
-    if (config.accents) bytes.addAll([_esc, 0x74, 16]); // page de codes WPC1252
+    if (config.accents) bytes.addAll([_esc, 0x74, config.codePage]);
   }
 
   void align(String a) => bytes.addAll([_esc, 0x61, a == 'center' ? 1 : (a == 'right' ? 2 : 0)]);
@@ -91,6 +93,10 @@ class TicketBuilder {
   void barcode(String data) {
     final value = _clean(data).codeUnits.where((c) => c >= 0x20 && c < 0x7F).toList();
     if (value.isEmpty || value.length > 40) return;
+    if (!config.barcode) {
+      text(String.fromCharCodes(value), alignTo: 'center', strong: true);
+      return;
+    }
     align('center');
     bytes.addAll([_gs, 0x68, 70]); // hauteur
     bytes.addAll([_gs, 0x77, value.length > 14 && config.paper < 80 ? 1 : 2]); // largeur du module (58 mm : 384 points)
@@ -102,9 +108,20 @@ class TicketBuilder {
 
   void feed(int lines) => bytes.addAll([_esc, 0x64, lines]);
 
-  void cut() => bytes.addAll([_gs, 0x56, 0x42, 0x00]);
+  void cut() {
+    switch (config.cutMode) {
+      case 'full':
+        bytes.addAll([_gs, 0x56, 0x00]);
+      case 'partial':
+        bytes.addAll([_gs, 0x56, 0x01]);
+      case 'none':
+        break;
+      default:
+        bytes.addAll([_gs, 0x56, 0x42, 0x00]);
+    }
+  }
 
-  void drawer() => bytes.addAll([_esc, 0x70, 0x00, 0x19, 0xFA]);
+  void drawer() => bytes.addAll([_esc, 0x70, config.drawerPin == 1 ? 0x01 : 0x00, 0x19, 0xFA]);
 
   String _clean(String value) {
     var s = value
@@ -123,7 +140,39 @@ class TicketBuilder {
     return String.fromCharCodes(s.runes.map((c) => c <= 0xFF ? c : 0x3F));
   }
 
-  List<int> _encode(String value) => _clean(value).codeUnits.map((c) => c & 0xFF).toList();
+  /// Octets envoyés : Latin-1 tel quel pour WPC1252, table DOS pour PC850 / PC858 / PC437 (accent retiré s'il manque).
+  List<int> _encode(String value) {
+    final clean = _clean(value);
+    if (!config.accents || config.codePage == 16) return clean.codeUnits.map((c) => c & 0xFF).toList();
+    final table = config.codePage == 0 ? _cp437 : _cp850;
+    final out = <int>[];
+    for (final c in clean.codeUnits) {
+      if (c < 0x80) {
+        out.add(c);
+      } else if (table.containsKey(c)) {
+        out.add(table[c]!);
+      } else if (c == 0x20AC && config.codePage == 19) {
+        out.add(0xD5);
+      } else {
+        final plain = _stripAccents(String.fromCharCode(c)).codeUnits;
+        out.add(plain.isNotEmpty && plain.first < 0x80 ? plain.first : 0x3F);
+      }
+    }
+    return out;
+  }
+
+  static const _cp437 = <int, int>{
+    0xC7: 0x80, 0xFC: 0x81, 0xE9: 0x82, 0xE2: 0x83, 0xE4: 0x84, 0xE0: 0x85, 0xE7: 0x87, 0xEA: 0x88, 0xEB: 0x89, 0xE8: 0x8A,
+    0xEF: 0x8B, 0xEE: 0x8C, 0xC4: 0x8E, 0xC9: 0x90, 0xF4: 0x93, 0xF6: 0x94, 0xFB: 0x96, 0xF9: 0x97, 0xD6: 0x99, 0xDC: 0x9A,
+    0xE1: 0xA0, 0xED: 0xA1, 0xF3: 0xA2, 0xFA: 0xA3, 0xF1: 0xA4, 0xD1: 0xA5, 0xB0: 0xF8,
+  };
+
+  static const _cp850 = <int, int>{
+    0xC7: 0x80, 0xFC: 0x81, 0xE9: 0x82, 0xE2: 0x83, 0xE4: 0x84, 0xE0: 0x85, 0xE7: 0x87, 0xEA: 0x88, 0xEB: 0x89, 0xE8: 0x8A,
+    0xEF: 0x8B, 0xEE: 0x8C, 0xC4: 0x8E, 0xC9: 0x90, 0xF4: 0x93, 0xF6: 0x94, 0xFB: 0x96, 0xF9: 0x97, 0xD6: 0x99, 0xDC: 0x9A,
+    0xE1: 0xA0, 0xED: 0xA1, 0xF3: 0xA2, 0xFA: 0xA3, 0xF1: 0xA4, 0xD1: 0xA5, 0xC2: 0xB6, 0xC0: 0xB7, 0xCA: 0xD2, 0xCB: 0xD3,
+    0xC8: 0xD4, 0xCE: 0xD7, 0xCF: 0xD8, 0xD4: 0xE2, 0xDB: 0xEA, 0xD9: 0xEB, 0xB0: 0xF8,
+  };
 
   static String _stripAccents(String s) {
     const from = 'àâäáãåçéèêëíìîïñóòôöõúùûüýÿÀÂÄÁÃÅÇÉÈÊËÍÌÎÏÑÓÒÔÖÕÚÙÛÜÝ';
@@ -137,12 +186,26 @@ class TicketBuilder {
   }
 }
 
-class PrinterService {
+/// État de la liaison avec l'imprimante, affiché dans la barre de la caisse.
+enum PrinterLink { none, connecting, connected, offline }
+
+class PrinterService with WidgetsBindingObserver {
   PrinterService._();
 
   static final instance = PrinterService._();
 
+  static const _watchEvery = Duration(seconds: 15);
+
   PrinterConfig? config;
+
+  /// none : pas d'imprimante ; connecting ; connected ; offline (éteinte, hors de portée, Bluetooth coupé).
+  final ValueNotifier<PrinterLink> link = ValueNotifier(PrinterLink.none);
+
+  Timer? _watch;
+  String? _linkedAddress;
+  bool _observing = false;
+  bool _connecting = false;
+  bool _sending = false;
 
   Future<PrinterConfig?> load() async {
     final raw = await AppState.instance.db.getValue('printer');
@@ -153,11 +216,115 @@ class PrinterService {
   Future<void> save(PrinterConfig value) async {
     config = value;
     await AppState.instance.db.setValue('printer', value.toJson());
+    startWatch();
   }
 
   Future<void> remove() async {
     config = null;
     await AppState.instance.db.setValue('printer', null);
+    _watch?.cancel();
+    if (await PrintBluetoothThermal.connectionStatus) await PrintBluetoothThermal.disconnect;
+    _linkedAddress = null;
+    link.value = PrinterLink.none;
+  }
+
+  /// Garde l'imprimante Bluetooth connectée : essai au démarrage, puis toutes les 15 s et au retour dans l'application.
+  void startWatch() {
+    _watch?.cancel();
+    if (!_observing) {
+      WidgetsBinding.instance.addObserver(this);
+      _observing = true;
+    }
+    final c = config;
+    if (c == null || !c.ready) {
+      link.value = PrinterLink.none;
+      return;
+    }
+    if (c.connection == 'network') {
+      link.value = PrinterLink.connected;
+      return;
+    }
+    if (!c.keepAlive) {
+      link.value = PrinterLink.offline;
+      return;
+    }
+    _watch = Timer.periodic(_watchEvery, (_) => check());
+    check();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) check();
+  }
+
+  /// Vérifie la liaison et reconnecte sans rien demander à l'utilisateur.
+  Future<void> check() async {
+    final c = config;
+    if (c == null || !c.ready || c.connection != 'bluetooth' || _connecting || _sending) return;
+    try {
+      if (!await _bluetoothUsable()) {
+        link.value = PrinterLink.offline;
+        return;
+      }
+      if (await _linkedTo(c.address)) {
+        link.value = PrinterLink.connected;
+        return;
+      }
+      if (c.keepAlive) await connectNow(quiet: true);
+    } catch (_) {
+      link.value = PrinterLink.offline;
+    }
+  }
+
+  /// Connexion à l'imprimante réglée. quiet : sans demande d'autorisation (vérification de fond).
+  Future<bool> connectNow({bool quiet = false}) async {
+    final c = config;
+    if (c == null || !c.ready || c.connection != 'bluetooth' || _connecting) return false;
+    _connecting = true;
+    link.value = PrinterLink.connecting;
+    try {
+      if (quiet) {
+        if (!await _bluetoothUsable()) {
+          link.value = PrinterLink.offline;
+          return false;
+        }
+      } else {
+        await ensureBluetooth();
+      }
+      if (await _linkedTo(c.address)) {
+        link.value = PrinterLink.connected;
+        return true;
+      }
+      final ok = await _connect(c.address);
+      link.value = ok ? PrinterLink.connected : PrinterLink.offline;
+      return ok;
+    } catch (_) {
+      link.value = PrinterLink.offline;
+      if (!quiet) rethrow;
+      return false;
+    } finally {
+      _connecting = false;
+    }
+  }
+
+  /// true si la liaison ouverte est bien celle de cette imprimante (sinon elle est fermée).
+  Future<bool> _linkedTo(String address) async {
+    if (!await PrintBluetoothThermal.connectionStatus) return false;
+    if (_linkedAddress == address) return true;
+    await PrintBluetoothThermal.disconnect;
+    _linkedAddress = null;
+    return false;
+  }
+
+  Future<bool> _connect(String address) async {
+    final ok = await PrintBluetoothThermal.connect(macPrinterAddress: address);
+    _linkedAddress = ok ? address : null;
+    return ok;
+  }
+
+  Future<bool> _bluetoothUsable() async {
+    if (!await Permission.bluetoothConnect.isGranted) return false;
+    return PrintBluetoothThermal.bluetoothEnabled;
   }
 
   /// Autorisations Bluetooth (Android 12 et plus).
@@ -192,32 +359,67 @@ class PrinterService {
       return;
     }
     await ensureBluetooth();
-    if (!await PrintBluetoothThermal.connectionStatus) {
-      final ok = await PrintBluetoothThermal.connect(macPrinterAddress: c.address);
-      if (!ok) throw PrintException('Connexion Bluetooth impossible : allumez l’imprimante et vérifiez l’appairage.');
+    while (_connecting) {
+      await Future<void>.delayed(const Duration(milliseconds: 200));
     }
-    final ok = await PrintBluetoothThermal.writeBytes(bytes);
-    if (!ok) {
-      await PrintBluetoothThermal.disconnect;
-      throw PrintException('Envoi à l’imprimante échoué, réessayez.');
+    _sending = true;
+    try {
+      for (var attempt = 1; attempt <= 2; attempt++) {
+        if (!await _linkedTo(c.address)) {
+          link.value = PrinterLink.connecting;
+          final connected = await _connect(c.address);
+          if (!connected) {
+            link.value = PrinterLink.offline;
+            if (attempt == 1) {
+              await Future<void>.delayed(const Duration(milliseconds: 900));
+              continue;
+            }
+            throw PrintException('Imprimante injoignable : allumez-la, rapprochez-la de la tablette et vérifiez l’appairage Bluetooth.');
+          }
+          link.value = PrinterLink.connected;
+        }
+        if (await PrintBluetoothThermal.writeBytes(bytes)) {
+          link.value = PrinterLink.connected;
+          return;
+        }
+        await PrintBluetoothThermal.disconnect;
+        _linkedAddress = null;
+        link.value = PrinterLink.offline;
+      }
+      throw PrintException('Envoi à l’imprimante échoué après reconnexion, réessayez.');
+    } finally {
+      _sending = false;
     }
   }
 
+  /// Ticket test : chaque partie correspond à une question de l'assistant (accents, largeur, code-barres, coupe).
   Future<void> printTest(PrinterConfig c) async {
     final t = TicketBuilder(c)..init();
     t.text('INFINIDIS', alignTo: 'center', strong: true, big: true);
-    t.text('Impression test', alignTo: 'center');
+    t.text('Ticket test', alignTo: 'center');
     t.hr();
-    t.text(presetById(c.presetId).label);
+    t.wrap(presetById(c.presetId).label);
     t.pair('Papier', '${c.paper} mm');
-    t.pair('Colonnes', '${c.columns}');
-    t.text('Accents : é è à ç ô');
-    t.text('1234567890' * (c.columns ~/ 10));
+    t.pair('Caractères / ligne', '${c.columns}');
+    t.pair('Accents', c.accents ? (codePages[c.codePage] ?? '${c.codePage}') : 'retirés');
     t.hr();
-    t.text('Si ce ticket est lisible,', alignTo: 'center');
-    t.text('le réglage est bon.', alignTo: 'center');
+    t.text('1. Accents : é è ê à â ç ô û É À Ç');
+    t.text('2. Ligne pleine (doit tenir sur 1 ligne) :');
+    t.text(List.generate(c.columns, (i) => '${(i + 1) % 10}').join());
+    t.text('3. Code-barres :');
+    t.barcode('TEST-123456');
+    t.pair('4. Total', '123,45', strong: true);
+    t.hr();
+    t.text('Répondez aux questions', alignTo: 'center');
+    t.text('sur la tablette.', alignTo: 'center');
     t.feed(3);
     if (c.cut) t.cut();
+    await send(c, t.bytes);
+  }
+
+  Future<void> testDrawer(PrinterConfig c) async {
+    final t = TicketBuilder(c)..init();
+    t.drawer();
     await send(c, t.bytes);
   }
 
