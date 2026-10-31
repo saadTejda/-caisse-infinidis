@@ -359,9 +359,18 @@ class AppState extends ChangeNotifier {
     return SaleResult(ticket, offline: true, message: 'Vente enregistrée hors ligne ($localNumber) : elle sera envoyée au retour de la connexion.');
   }
 
+  /// Comme le serveur : le magasin d'abord, le manque vient du dépôt (transfert dépôt → magasin).
   Future<void> _decrementStock(List<CartLine> lines) async {
     for (final l in lines) {
-      l.product.storeAvailable -= l.quantity;
+      final fromStore = l.quantity <= l.product.storeAvailable ? l.quantity : (l.product.storeAvailable > 0 ? l.product.storeAvailable : 0);
+      var rest = l.quantity - fromStore;
+      l.product.storeAvailable -= fromStore;
+      if (rest > 0 && l.product.depotAvailable > 0) {
+        final fromDepot = rest <= l.product.depotAvailable ? rest : l.product.depotAvailable;
+        l.product.depotAvailable -= fromDepot;
+        rest -= fromDepot;
+      }
+      l.product.storeAvailable -= rest;
       await db.saveProduct(l.product);
     }
   }

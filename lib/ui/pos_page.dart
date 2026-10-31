@@ -598,7 +598,7 @@ class _PosPageState extends State<PosPage> {
                     : null)
             : GridView.builder(
                 padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
-                gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(maxCrossAxisExtent: 240, mainAxisExtent: 104, crossAxisSpacing: 8, mainAxisSpacing: 8),
+                gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(maxCrossAxisExtent: 240, mainAxisExtent: 118, crossAxisSpacing: 8, mainAxisSpacing: 8),
                 itemCount: _products.length,
                 itemBuilder: (context, i) => _tile(_products[i], cur),
               ),
@@ -638,8 +638,15 @@ class _PosPageState extends State<PosPage> {
     );
   }
 
+  Widget _stock(String label, int qty, Color color) => Container(
+        margin: const EdgeInsets.only(left: 4),
+        padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+        decoration: BoxDecoration(color: color.withOpacity(0.12), borderRadius: BorderRadius.circular(4)),
+        child: Text('$label $qty', style: TextStyle(fontSize: 11, color: color, fontWeight: FontWeight.w600)),
+      );
+
   Widget _tile(Product p, String cur) {
-    final low = p.storeAvailable <= 0;
+    final storeColor = p.storeAvailable > 0 ? Colors.green.shade700 : (p.depotAvailable > 0 ? Colors.orange.shade800 : Colors.red);
     return Material(
       color: Colors.white,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10), side: BorderSide(color: Colors.grey.shade300)),
@@ -657,7 +664,7 @@ class _PosPageState extends State<PosPage> {
         ),
         child: Row(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
           Container(width: 5, color: _parseColor(p.color) ?? Colors.blueGrey.shade200),
-          SizedBox(width: 88, child: ProductThumb(p, key: ValueKey('${p.variantId}_${p.imageKey}'), size: 88)),
+              SizedBox(width: 92, child: ProductThumb(p, key: ValueKey('${p.variantId}_${p.imageKey}'), size: 92)),
           Expanded(
             child: Padding(
               padding: const EdgeInsets.all(8),
@@ -667,7 +674,11 @@ class _PosPageState extends State<PosPage> {
                 const Spacer(),
                 Row(children: [
                   Expanded(child: Text(p.price == null ? 'Sans prix' : '${p.price!.toStringAsFixed(2)} $cur', style: const TextStyle(fontWeight: FontWeight.bold))),
-                  Text('${p.storeAvailable}', style: TextStyle(fontSize: 12, color: low ? Colors.red : Colors.green.shade700, fontWeight: FontWeight.w600)),
+                ]),
+                const SizedBox(height: 3),
+                Row(children: [
+                  _stock('Mag.', p.storeAvailable, storeColor),
+                  _stock('Dépôt', p.depotAvailable, p.depotAvailable > 0 ? Colors.blueGrey.shade700 : Colors.grey),
                 ]),
               ]),
             ),

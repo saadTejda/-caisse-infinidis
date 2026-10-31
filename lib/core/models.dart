@@ -29,7 +29,7 @@ class Product {
   final double taxRate;
   final String color;
   int storeAvailable;
-  final int depotAvailable;
+  int depotAvailable;
   final String? imageKey;
   final int? categoryId;
 
