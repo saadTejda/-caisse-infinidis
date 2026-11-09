@@ -25,7 +25,7 @@ class PosApp extends StatelessWidget {
   Widget build(BuildContext context) {
     const brand = Color(0xFF1F4FD8);
     return MaterialApp(
-      title: 'Caisse INFINIDIS',
+      title: 'Caisse · Application Saad Tejda',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(seedColor: brand),

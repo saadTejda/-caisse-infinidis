@@ -70,7 +70,17 @@ class AppState extends ChangeNotifier {
     if (loggedIn) {
       unawaited(loadContext());
       start();
+    } else if (api != null) {
+      unawaited(api!.ping().then(_rename).catchError((_) {}));
     }
+  }
+
+  /// Le nom affiché suit celui du serveur (Marque & adresse), même s'il change après l'installation.
+  Future<void> _rename(String name) async {
+    if (name.isEmpty || name == serverName) return;
+    serverName = name;
+    await prefs.setString('server_name', name);
+    notifyListeners();
   }
 
   void applyWake() {
@@ -142,6 +152,7 @@ class AppState extends ChangeNotifier {
     try {
       context = await call(() => api!.get('/context'));
       await prefs.setString('context', jsonEncode(context));
+      await _rename((asMap(context['brand'])['name'] ?? '').toString());
       notifyListeners();
     } catch (_) {}
   }

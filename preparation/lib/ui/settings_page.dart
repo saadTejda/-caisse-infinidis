@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../core/app_state.dart';
 import '../main.dart';
 import '../printing/label_printer.dart';
+import 'developer_footer.dart';
 import 'setup_page.dart';
 
 /// Poste d'impression et réglages de cet appareil.
@@ -167,6 +168,7 @@ class _SettingsPageState extends State<SettingsPage> {
               label: const Text('Se déconnecter'),
             ),
           ),
+          const DeveloperFooter(),
         ],
       ),
     );

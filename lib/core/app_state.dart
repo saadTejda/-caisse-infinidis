@@ -103,8 +103,13 @@ class AppState extends ChangeNotifier {
     if (api == null) return false;
     bool now;
     try {
-      await api!.ping();
+      final name = await api!.ping();
       now = true;
+      if (name.isNotEmpty && name != serverName) {
+        serverName = name;
+        await db.setValue('server_name', name);
+        notifyListeners();
+      }
     } catch (_) {
       now = false;
     }

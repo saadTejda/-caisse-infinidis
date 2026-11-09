@@ -19,7 +19,7 @@ class ApiException implements Exception {
   String toString() => message;
 }
 
-/// Appels à l'API caisse /api/pos/v1 du serveur INFINIDIS Gestion.
+/// Appels à l'API caisse /api/pos/v1 du serveur de gestion.
 class ApiClient {
   ApiClient({required this.baseUrl, this.token});
 
@@ -88,10 +88,10 @@ class ApiClient {
     throw ApiException(message, status: response.statusCode, network: response.statusCode >= 500, errors: errors);
   }
 
-  /// Vérifie qu'une adresse est bien un serveur INFINIDIS Gestion.
+  /// Vérifie qu'une adresse est bien un serveur de gestion (identifiant technique « infinidis-gestion » inchangé).
   Future<String> ping() async {
     final data = await get('/ping', timeout: const Duration(seconds: 10));
-    if (data['app'] != 'infinidis-gestion') throw ApiException('Ce serveur n’est pas un serveur INFINIDIS Gestion.');
-    return (data['name'] ?? 'INFINIDIS Gestion').toString();
+    if (data['app'] != 'infinidis-gestion') throw ApiException('Cette adresse n’est pas un serveur de gestion compatible.');
+    return (data['name'] ?? 'Application Saad Tejda').toString();
   }
 }

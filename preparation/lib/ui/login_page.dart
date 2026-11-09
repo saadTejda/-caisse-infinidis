@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../core/app_state.dart';
+import 'developer_footer.dart';
 import 'setup_page.dart';
 
 class LoginPage extends StatefulWidget {
@@ -46,9 +47,9 @@ class _LoginPageState extends State<LoginPage> {
                 children: [
                   Icon(Icons.inventory_2_outlined, size: 56, color: Theme.of(context).colorScheme.primary),
                   const SizedBox(height: 8),
-                  Text(app.serverName.isNotEmpty ? app.serverName : 'Préparation INFINIDIS', textAlign: TextAlign.center, style: Theme.of(context).textTheme.headlineSmall),
+                  Text(app.serverName.isNotEmpty ? app.serverName : DeveloperFooter.product, textAlign: TextAlign.center, style: Theme.of(context).textTheme.headlineSmall),
                   const SizedBox(height: 4),
-                  Text('Connexion préparateur', textAlign: TextAlign.center, style: Theme.of(context).textTheme.bodyMedium),
+                  Text('Préparation · connexion préparateur', textAlign: TextAlign.center, style: Theme.of(context).textTheme.bodyMedium),
                   const SizedBox(height: 24),
                   TextField(
                     controller: _email,
@@ -87,6 +88,7 @@ class _LoginPageState extends State<LoginPage> {
                     icon: const Icon(Icons.dns_outlined, size: 18),
                     label: Text(app.serverUrl, overflow: TextOverflow.ellipsis),
                   ),
+                  const DeveloperFooter(),
                 ],
               ),
             ),

@@ -18,7 +18,7 @@ class ApiException implements Exception {
   String toString() => message;
 }
 
-/// Appels à l'API préparateur /api/prep/v1 du serveur INFINIDIS Gestion.
+/// Appels à l'API préparateur /api/prep/v1 du serveur de gestion.
 class ApiClient {
   ApiClient({required this.baseUrl, this.token});
 
@@ -101,10 +101,10 @@ class ApiClient {
     throw ApiException(message, status: response.statusCode, network: response.statusCode >= 500);
   }
 
-  /// Vérifie qu'une adresse est bien un serveur INFINIDIS Gestion avec l'API préparation.
+  /// Vérifie qu'une adresse est bien un serveur de gestion avec l'API préparation (identifiant technique inchangé).
   Future<String> ping() async {
     final data = await get('/ping', timeout: const Duration(seconds: 10));
     if (data['app'] != 'infinidis-preparation') throw ApiException('Ce serveur n’a pas l’API préparation (mettez à jour le site).');
-    return (data['name'] ?? 'INFINIDIS Gestion').toString();
+    return (data['name'] ?? 'Application Saad Tejda').toString();
   }
 }

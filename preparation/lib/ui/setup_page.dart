@@ -1,8 +1,9 @@
 import 'package:flutter/material.dart';
 
 import '../core/app_state.dart';
+import 'developer_footer.dart';
 
-/// Adresse du serveur INFINIDIS Gestion.
+/// Adresse du serveur de gestion.
 class SetupPage extends StatefulWidget {
   const SetupPage({super.key, this.changing = false});
 
@@ -52,7 +53,8 @@ class _SetupPageState extends State<SetupPage> {
               children: [
                 Icon(Icons.inventory_2_outlined, size: 64, color: Theme.of(context).colorScheme.primary),
                 const SizedBox(height: 12),
-                Text('Préparation INFINIDIS', textAlign: TextAlign.center, style: Theme.of(context).textTheme.headlineSmall),
+                Text(DeveloperFooter.product, textAlign: TextAlign.center, style: Theme.of(context).textTheme.headlineSmall),
+                Text('Préparation des commandes', textAlign: TextAlign.center, style: Theme.of(context).textTheme.titleSmall),
                 const SizedBox(height: 8),
                 const Text('Saisissez l’adresse de votre application de gestion.', textAlign: TextAlign.center),
                 const SizedBox(height: 24),
@@ -73,6 +75,8 @@ class _SetupPageState extends State<SetupPage> {
                   icon: _busy ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2)) : const Icon(Icons.check),
                   label: const Text('Vérifier et enregistrer'),
                 ),
+                const SizedBox(height: 16),
+                const DeveloperFooter(),
               ],
             ),
           ),

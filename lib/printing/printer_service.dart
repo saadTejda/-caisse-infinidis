@@ -395,7 +395,7 @@ class PrinterService with WidgetsBindingObserver {
   /// Ticket test : chaque partie correspond à une question de l'assistant (accents, largeur, code-barres, coupe).
   Future<void> printTest(PrinterConfig c) async {
     final t = TicketBuilder(c)..init();
-    t.text('INFINIDIS', alignTo: 'center', strong: true, big: true);
+    t.text('Application Saad Tejda', alignTo: 'center', strong: true);
     t.text('Ticket test', alignTo: 'center');
     t.hr();
     t.wrap(presetById(c.presetId).label);
@@ -441,7 +441,7 @@ class PrinterService with WidgetsBindingObserver {
     final t = TicketBuilder(c)..init();
     if (openDrawer && c.drawer) t.drawer();
     for (var copy = 0; copy < c.copies; copy++) {
-      t.text((company['name'] ?? 'INFINIDIS').toString(), alignTo: 'center', strong: true, big: c.paper >= 80);
+      t.text((company['name'] ?? 'Application Saad Tejda').toString(), alignTo: 'center', strong: true, big: c.paper >= 80);
       for (final line in [company['address'], company['phone']]) {
         if ((line ?? '').toString().trim().isNotEmpty) t.text(line.toString(), alignTo: 'center');
       }
@@ -499,7 +499,7 @@ class PrinterService with WidgetsBindingObserver {
     final app = AppState.instance;
     final t = TicketBuilder(c)..init();
     if (openDrawer && c.drawer) t.drawer();
-    t.text((app.company['name'] ?? 'INFINIDIS').toString(), alignTo: 'center', strong: true);
+    t.text((app.company['name'] ?? 'Application Saad Tejda').toString(), alignTo: 'center', strong: true);
     t.text(label.toUpperCase(), alignTo: 'center', strong: true, big: c.paper >= 80);
     t.hr();
     t.pair('Date', date);
@@ -524,7 +524,7 @@ class PrinterService with WidgetsBindingObserver {
     final currency = app.currency;
     final t = TicketBuilder(c)..init();
     if (openDrawer && c.drawer) t.drawer();
-    t.text((company['name'] ?? 'INFINIDIS').toString(), alignTo: 'center', strong: true, big: c.paper >= 80);
+    t.text((company['name'] ?? 'Application Saad Tejda').toString(), alignTo: 'center', strong: true, big: c.paper >= 80);
     t.text('RETOUR ${doc['number']}', alignTo: 'center', strong: true);
     t.hr();
     t.pair('Ticket d’origine', doc['sale_number'].toString());

@@ -22,7 +22,7 @@ class PrepApp extends StatelessWidget {
   Widget build(BuildContext context) {
     const brand = Color(0xFF059669);
     return MaterialApp(
-      title: 'Préparation INFINIDIS',
+      title: 'Préparation · Application Saad Tejda',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(seedColor: brand, primary: brand),

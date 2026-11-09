@@ -25,7 +25,7 @@ text = manifest.read_text(encoding="utf-8")
 missing = [p for p in permissions if p.split('android:name="')[1].split('"')[0] not in text]
 if missing:
     text = re.sub(r"(<manifest[^>]*>)", lambda m: m.group(1) + "\n    " + "\n    ".join(missing), text, count=1)
-text = re.sub(r'android:label="[^"]*"', 'android:label="Préparation INFINIDIS"', text, count=1)
+text = re.sub(r'android:label="[^"]*"', 'android:label="Préparation Saad Tejda"', text, count=1)
 if "usesCleartextTraffic" not in text:
     text = text.replace("<application", '<application\n        android:usesCleartextTraffic="true"', 1)
 manifest.write_text(text, encoding="utf-8")
