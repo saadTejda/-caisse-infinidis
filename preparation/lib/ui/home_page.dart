@@ -49,7 +49,15 @@ class _HomePageState extends State<HomePage> {
   void initState() {
     super.initState();
     app.addListener(_onState);
-    WidgetsBinding.instance.addPostFrameCallback((_) => _focus.requestFocus());
+    _focus.addListener(_hideKeyboard);
+    WidgetsBinding.instance.addPostFrameCallback((_) => _refocus());
+  }
+
+  /// La douchette tape comme un clavier : le clavier de l'écran reste caché tant qu'on ne le demande pas.
+  void _hideKeyboard() {
+    if (_focus.hasFocus && !_keyboard) {
+      Future<void>.delayed(const Duration(milliseconds: 50), () => SystemChannels.textInput.invokeMethod<void>('TextInput.hide'));
+    }
   }
 
   @override
@@ -90,7 +98,9 @@ class _HomePageState extends State<HomePage> {
   }
 
   void _refocus() {
-    if (mounted) _focus.requestFocus();
+    if (!mounted) return;
+    _focus.requestFocus();
+    _hideKeyboard();
   }
 
   bool get _needsWeight => app.order?['courier_kind'] == 'amana' && _weight <= 0;
