@@ -43,6 +43,7 @@ class _HomePageState extends State<HomePage> {
   dynamic _adopted;
 
   static const _weights = [500, 1000, 1900, 3000, 5000, 10000, 14000, 30000];
+  static const _cardShape = RoundedRectangleBorder(borderRadius: BorderRadius.all(Radius.circular(16)), side: BorderSide(color: Color(0xFFE2E8F0)));
 
   @override
   void initState() {
@@ -469,6 +470,7 @@ class _HomePageState extends State<HomePage> {
           final hold = r['prep'] == 'on_hold';
           final articles = asInt(r['articles']);
           return Card(
+            elevation: 0,
             color: active ? const Color(0xFFECFDF5) : Colors.white,
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14), side: BorderSide(color: active ? Theme.of(context).colorScheme.primary : const Color(0xFFE2E8F0), width: active ? 2 : 1)),
             child: InkWell(
@@ -527,6 +529,8 @@ class _HomePageState extends State<HomePage> {
       );
 
   Widget _welcome() => Card(
+        elevation: 0,
+        shape: _cardShape,
         color: Colors.white,
         child: Center(
           child: Padding(
@@ -551,6 +555,8 @@ class _HomePageState extends State<HomePage> {
     final courier = (o['courier'] ?? '').toString();
     final api = o['courier_kind'] != 'internal' && courier.isNotEmpty;
     return Card(
+      elevation: 0,
+      shape: _cardShape,
       color: Colors.white,
       child: Padding(
         padding: const EdgeInsets.all(12),
@@ -734,6 +740,8 @@ class _HomePageState extends State<HomePage> {
         final open = _openProduct == p['key'];
         final orders = asList(p['orders']);
         return Card(
+          elevation: 0,
+          shape: _cardShape,
           color: Colors.white,
           child: Column(children: [
             InkWell(
@@ -784,6 +792,8 @@ class _HomePageState extends State<HomePage> {
         final collected = d['collected'] == true;
         final labelled = d['labelled'] == true;
         return Card(
+          elevation: 0,
+          shape: _cardShape,
           color: Colors.white,
           child: ListTile(
             leading: Icon(collected ? Icons.local_shipping_outlined : Icons.check_circle, color: collected ? Colors.blue : Colors.green, size: 32),

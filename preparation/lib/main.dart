@@ -31,7 +31,6 @@ class PrepApp extends StatelessWidget {
         inputDecorationTheme: const InputDecorationTheme(border: OutlineInputBorder(), isDense: true),
         filledButtonTheme: FilledButtonThemeData(style: FilledButton.styleFrom(minimumSize: const Size(0, 52), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)))),
         outlinedButtonTheme: OutlinedButtonThemeData(style: OutlinedButton.styleFrom(minimumSize: const Size(0, 52), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)))),
-        cardTheme: CardTheme(elevation: 0, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16), side: const BorderSide(color: Color(0xFFE2E8F0)))),
       ),
       home: ListenableBuilder(
         listenable: state,
