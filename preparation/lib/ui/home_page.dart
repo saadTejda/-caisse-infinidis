@@ -42,7 +42,7 @@ class _HomePageState extends State<HomePage> {
   int _weight = 0;
   dynamic _adopted;
 
-  static const _weights = [500, 1000, 1900, 3000, 5000, 10000, 14000, 30000];
+  static const _weights = [1900, 14000, 30000];
   static const _cardShape = RoundedRectangleBorder(borderRadius: BorderRadius.all(Radius.circular(16)), side: BorderSide(color: Color(0xFFE2E8F0)));
 
   @override
@@ -264,25 +264,7 @@ class _HomePageState extends State<HomePage> {
     await _run(() => _finishNow(force: true, reason: reason.trim()));
   }
 
-  Future<void> _pickWeight() async {
-    final controller = TextEditingController(text: _weight > 0 ? '$_weight' : '');
-    final grams = await showDialog<int>(
-      context: context,
-      builder: (c) => AlertDialog(
-        title: const Text('Poids du colis'),
-        content: Column(mainAxisSize: MainAxisSize.min, children: [
-          Wrap(spacing: 8, runSpacing: 8, children: [for (final w in _weights) ChoiceChip(label: Text(_kg(w)), selected: _weight == w, onSelected: (_) => Navigator.pop(c, w))]),
-          const SizedBox(height: 12),
-          TextField(controller: controller, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'Autre poids (grammes)')),
-        ]),
-        actions: [FilledButton(onPressed: () => Navigator.pop(c, int.tryParse(controller.text.trim()) ?? 0), child: const Text('OK'))],
-      ),
-    );
-    if (grams != null) setState(() => _weight = grams.clamp(0, 100000));
-    _refocus();
-  }
-
-  String _kg(int grams) => grams >= 1000 ? '${(grams / 1000).toStringAsFixed(grams % 1000 == 0 ? 0 : 1)} kg' : '$grams g';
+  String _kg(int grams) => '${(grams / 1000).toStringAsFixed(grams % 1000 == 0 ? 0 : 1)} kg';
 
   void _toggleImmersive() {
     setState(() => _immersive = !_immersive);
@@ -719,10 +701,25 @@ class _HomePageState extends State<HomePage> {
           Text('$_packages', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
           IconButton(onPressed: _packages < 50 ? () => setState(() => _packages++) : null, icon: const Icon(Icons.add_circle_outline)),
         ]),
-        OutlinedButton.icon(
-          onPressed: _pickWeight,
-          icon: Icon(Icons.scale_outlined, color: _needsWeight ? Colors.red : null),
-          label: Text(_weight > 0 ? 'Poids ${_kg(_weight)}' : (o['courier_kind'] == 'amana' ? 'Poids obligatoire' : 'Poids'), style: TextStyle(color: _needsWeight ? Colors.red : null)),
+        SizedBox(
+          width: 190,
+          child: DropdownButtonFormField<int>(
+            value: _weight > 0 ? _weight : null,
+            decoration: InputDecoration(
+              labelText: o['courier_kind'] == 'amana' ? 'Poids *' : 'Poids',
+              prefixIcon: Icon(Icons.scale_outlined, color: _needsWeight ? Colors.red : null),
+              errorText: _needsWeight ? 'Obligatoire pour Amana' : null,
+            ),
+            hint: const Text('Choisir le poids'),
+            items: [
+              for (final w in _weights) DropdownMenuItem(value: w, child: Text(_kg(w))),
+              if (_weight > 0 && !_weights.contains(_weight)) DropdownMenuItem(value: _weight, child: Text('Autre : ${_kg(_weight)}')),
+            ],
+            onChanged: (v) {
+              setState(() => _weight = v ?? 0);
+              _refocus();
+            },
+          ),
         ),
         if (hold)
           OutlinedButton.icon(onPressed: _busy ? null : () => _run(app.resume), icon: const Icon(Icons.play_arrow), label: const Text('Reprendre'))
