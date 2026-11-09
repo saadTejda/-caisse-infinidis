@@ -52,12 +52,23 @@ kts_signing = """    signingConfigs {
 
 """
 
+KOTLIN = "2.2.0"
+NDK = "27.0.12077973"
+
+for name in ("settings.gradle", "settings.gradle.kts"):
+    settings = root / "android" / name
+    if settings.exists():
+        s = settings.read_text(encoding="utf-8")
+        s = re.sub(r'(org\.jetbrains\.kotlin\.android"\)?\s+version\s+")[^"]+(")', r"\g<1>" + KOTLIN + r"\2", s)
+        settings.write_text(s, encoding="utf-8")
+
 for name in ("build.gradle", "build.gradle.kts"):
     gradle = root / "android" / "app" / name
     if not gradle.exists():
         continue
     g = gradle.read_text(encoding="utf-8")
     g = re.sub(r"minSdk(Version)?\s*=?\s*flutter\.minSdkVersion", "minSdk = 23", g)
+    g = re.sub(r"ndkVersion\s*=?\s*flutter\.ndkVersion", 'ndkVersion = "' + NDK + '"', g)
     if signing and "CAISSE_KEYSTORE_FILE" not in g:
         kts = name.endswith(".kts")
         g = re.sub(r"(\n\s*buildTypes\s*\{)", "\n" + (kts_signing if kts else groovy_signing).rstrip("\n") + r"\1", g, count=1)
