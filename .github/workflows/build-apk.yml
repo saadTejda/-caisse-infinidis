@@ -3,6 +3,7 @@ name: APK caisse
 on:
   push:
     branches: [main]
+    paths-ignore: ['preparation/**', '.github/workflows/build-prep-apk.yml']
   workflow_dispatch:
 
 permissions:
