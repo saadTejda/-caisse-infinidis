@@ -25,6 +25,7 @@ class AppState extends ChangeNotifier {
   final PrepSettings settings;
   final _secure = const FlutterSecureStorage();
   Timer? _timer;
+  DateTime _contextAt = DateTime.fromMillisecondsSinceEpoch(0);
 
   ApiClient? api;
   String serverUrl = '';
@@ -150,6 +151,7 @@ class AppState extends ChangeNotifier {
 
   Future<void> loadContext() async {
     try {
+      _contextAt = DateTime.now();
       context = await call(() => api!.get('/context'));
       await prefs.setString('context', jsonEncode(context));
       await _rename((asMap(context['brand'])['name'] ?? '').toString());
@@ -171,6 +173,7 @@ class AppState extends ChangeNotifier {
   /// Relit la file ; newOrders > 0 quand des commandes « À préparer » viennent d'arriver.
   Future<void> refresh() async {
     if (!loggedIn) return;
+    if (DateTime.now().difference(_contextAt) > const Duration(minutes: 10)) unawaited(loadContext());
     try {
       final before = asInt(counts['todo']);
       final hadFeed = feed.isNotEmpty;
