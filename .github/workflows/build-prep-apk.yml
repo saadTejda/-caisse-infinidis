@@ -61,7 +61,17 @@ jobs:
       - name: Construction des APK (un par type d'appareil)
         env:
           CAISSE_KEYSTORE_PASSWORD: ${{ secrets.CAISSE_KEYSTORE_PASSWORD }}
-        run: flutter build apk --release --split-per-abi --build-number=${{ github.run_number }}
+        run: |
+          set -o pipefail
+          flutter build apk --release --split-per-abi --build-number=${{ github.run_number }} 2>&1 | tee build.log
+
+      - name: Erreur de construction (lisible sans connexion)
+        if: failure()
+        run: |
+          test -f build.log || exit 0
+          grep -nE "What went wrong|error:|Error:|FAILURE|requires|incompatible|Execution failed|> " build.log | head -n 60 > errors.txt || true
+          msg=$(head -c 6000 errors.txt | sed ':a;N;$!ba;s/%/%25/g;s/\r//g;s/\n/%0A/g')
+          echo "::error title=Gradle::$msg"
 
       - name: Renommer
         run: |
