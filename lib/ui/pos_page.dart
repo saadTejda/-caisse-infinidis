@@ -14,6 +14,7 @@ import 'movement_dialog.dart';
 import 'payment_sheet.dart';
 import 'return_page.dart';
 import 'pending_page.dart';
+import 'pos_header.dart';
 import 'printer_settings.dart';
 import 'scanner_page.dart';
 import 'session_dialog.dart';
@@ -439,10 +440,8 @@ class _PosPageState extends State<PosPage> {
     return Scaffold(
       appBar: AppBar(
         titleSpacing: 12,
-        title: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text((app.store?['name'] ?? 'Caisse').toString(), style: const TextStyle(fontSize: 17)),
-          Text('${app.user?['name'] ?? ''} · ${session == null ? 'caisse fermée' : 'caisse ouverte'}', style: const TextStyle(fontSize: 12)),
-        ]),
+        toolbarHeight: 64,
+        title: PosHeader(app: app, wide: wide),
         actions: [
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 4),
