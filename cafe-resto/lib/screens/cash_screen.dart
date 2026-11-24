@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../api/api_client.dart';
+import '../api/api_error.dart';
 import '../providers/app_providers.dart';
 import '../theme/pos_theme.dart';
 import 'pos_dialogs.dart';
@@ -17,7 +18,10 @@ class CashScreen extends ConsumerStatefulWidget {
 class _CashScreenState extends ConsumerState<CashScreen> {
   Map<String, dynamic>? _session;
   final _opening = TextEditingController(text: '0');
+  final _openingNote = TextEditingController();
+  List<Map<String, dynamic>> _history = [];
   final _counted = TextEditingController();
+  final _closingNote = TextEditingController();
   final _movementAmount = TextEditingController();
   final _movementReason = TextEditingController();
   String _movementType = 'cash_in';
@@ -81,22 +85,34 @@ class _CashScreenState extends ConsumerState<CashScreen> {
       _busy = true;
       _error = null;
     });
+    Map<String, dynamic>? session;
+    var history = <Map<String, dynamic>>[];
+    String? error;
+    final dio = ref.read(dioProvider);
     try {
-      final dio = ref.read(dioProvider);
       final response = await dio.get('/api/v1/cash/session');
-      final raw = response.data['data'];
-      setState(() {
-        _session = raw is Map ? Map<String, dynamic>.from(raw) : null;
-      });
-      await ref.read(syncServiceProvider).refreshCashStatus();
+      final raw = response.data is Map ? response.data['data'] : null;
+      session = raw is Map ? Map<String, dynamic>.from(raw) : null;
     } on DioException catch (e) {
-      setState(() {
-        _session = null;
-        _error = e.response?.data?['message']?.toString() ?? 'Impossible de lire le tiroir.';
-      });
-    } finally {
-      if (mounted) setState(() => _busy = false);
+      if (e.response?.statusCode != 404) error = apiMessage(e, fallback: 'Impossible de lire le tiroir.');
     }
+    try {
+      final response = await dio.get('/api/v1/cash/sessions');
+      history = apiList(response.data);
+    } on DioException catch (e) {
+      error ??= apiMessage(e, fallback: 'Impossible de lire le tiroir.');
+    }
+    if (mounted) {
+      setState(() {
+        _session = session;
+        _history = history;
+        _error = error;
+      });
+    }
+    try {
+      await ref.read(syncServiceProvider).refreshCashStatus();
+    } catch (_) {}
+    if (mounted) setState(() => _busy = false);
   }
 
   Future<void> _open() async {
@@ -109,10 +125,11 @@ class _CashScreenState extends ConsumerState<CashScreen> {
     try {
       await ref.read(dioProvider).post('/api/v1/cash/sessions', data: {
         'opening_amount': double.tryParse(_opening.text.replaceAll(',', '.')) ?? 0,
+        'opening_note': _openingNote.text.trim().isEmpty ? null : _openingNote.text.trim(),
       });
       await _load();
     } on DioException catch (e) {
-      setState(() => _error = e.response?.data?.toString() ?? 'Ouverture refusée.');
+      setState(() => _error = apiMessage(e, fallback: 'Ouverture refusée.'));
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -121,13 +138,18 @@ class _CashScreenState extends ConsumerState<CashScreen> {
   Future<void> _move() async {
     final id = _session?['id'] ?? _session?['session']?['id'];
     if (id == null) return;
+    final amount = double.tryParse(_movementAmount.text.replaceAll(',', '.')) ?? 0;
+    if (amount <= 0 || _movementReason.text.trim().isEmpty) {
+      setState(() => _error = 'Montant positif et motif obligatoires.');
+      return;
+    }
     setState(() => _busy = true);
     try {
       await ref.read(dioProvider).post(
         '/api/v1/cash/sessions/$id/movements',
         data: {
           'type': _movementType,
-          'amount': double.tryParse(_movementAmount.text.replaceAll(',', '.')) ?? 0,
+          'amount': amount,
           'reason': _movementReason.text.trim(),
         },
       );
@@ -135,7 +157,7 @@ class _CashScreenState extends ConsumerState<CashScreen> {
       _movementReason.clear();
       await _load();
     } on DioException catch (e) {
-      setState(() => _error = e.response?.data?.toString() ?? 'Mouvement refusé.');
+      setState(() => _error = apiMessage(e, fallback: 'Mouvement refusé.'));
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -151,15 +173,20 @@ class _CashScreenState extends ConsumerState<CashScreen> {
     }
     setState(() => _busy = true);
     try {
-      await ref.read(dioProvider).post(
+      final response = await ref.read(dioProvider).post(
         '/api/v1/cash/sessions/$id/close',
         data: {
           'closing_counted': double.tryParse(_counted.text.replaceAll(',', '.')) ?? 0,
+          'closing_note': _closingNote.text.trim().isEmpty ? null : _closingNote.text.trim(),
         },
       );
+      final closed = apiMap(response.data);
+      if (mounted && closed['variance'] != null) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Écart ${closed['variance']}')));
+      }
       await _load();
     } on DioException catch (e) {
-      setState(() => _error = e.response?.data?.toString() ?? 'Fermeture refusée.');
+      setState(() => _error = apiMessage(e, fallback: 'Fermeture refusée.'));
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -169,13 +196,14 @@ class _CashScreenState extends ConsumerState<CashScreen> {
   Widget build(BuildContext context) {
     final data = _session ?? {};
     final status = '${data['status'] ?? 'closed'}';
-    final isOpen = _session != null && (status == 'open' || data['id'] != null);
+    final isOpen = status == 'open';
+    final totals = data['totals'] is Map ? Map<String, dynamic>.from(data['totals'] as Map) : const <String, dynamic>{};
 
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
         Text(
-          isOpen ? 'Session ouverte' : 'Aucune fermée',
+          isOpen ? 'Session ouverte' : 'Aucune caisse ouverte',
           style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w800),
         ),
         const SizedBox(height: 8),
@@ -190,16 +218,32 @@ class _CashScreenState extends ConsumerState<CashScreen> {
         const SizedBox(height: 16),
         if (!isOpen) ...[
           _padField(_opening, 'Fond de caisse', () => _editAmount(_opening, 'Fond de caisse')),
+          const SizedBox(height: 8),
+          _padField(_openingNote, 'Note', () => _editText(_openingNote, 'Note d’ouverture')),
           const SizedBox(height: 12),
           ElevatedButton(
             onPressed: _busy ? null : _open,
             child: const Text('Ouvrir le tiroir'),
           ),
         ] else ...[
+          const Text('La carte ne rentre pas dans le tiroir.', style: TextStyle(color: PosColors.muted)),
+          const SizedBox(height: 8),
           Card(
             child: Padding(
               padding: const EdgeInsets.all(16),
-              child: Text('Session: ${data['id'] ?? data['session']?['id'] ?? '—'}'),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('Session ${data['id'] ?? '—'}', style: const TextStyle(fontWeight: FontWeight.w800)),
+                  Text('Espèces attendues ${totals['expected'] ?? data['closing_expected'] ?? '—'}'),
+                  Text('Ventes espèces ${totals['cash_sales'] ?? '—'}'),
+                  Text('Entrées ${totals['cash_in'] ?? '—'}'),
+                  Text('Sorties ${totals['cash_out'] ?? '—'}'),
+                  Text('Dépenses ${totals['expenses'] ?? '—'}'),
+                  if (data['closing_counted'] != null) Text('Compté ${data['closing_counted']}'),
+                  if (data['variance'] != null) Text('Écart ${data['variance']}'),
+                ],
+              ),
             ),
           ),
           const SizedBox(height: 12),
@@ -233,6 +277,8 @@ class _CashScreenState extends ConsumerState<CashScreen> {
           const Divider(height: 32),
           _padField(_counted, 'Espèces comptées', () => _editAmount(_counted, 'Espèces comptées')),
           const SizedBox(height: 8),
+          _padField(_closingNote, 'Note de fermeture', () => _editText(_closingNote, 'Note de fermeture')),
+          const SizedBox(height: 8),
           ElevatedButton(
             style: ElevatedButton.styleFrom(backgroundColor: PosColors.danger),
             onPressed: _busy ? null : _close,
@@ -241,6 +287,14 @@ class _CashScreenState extends ConsumerState<CashScreen> {
         ],
         const SizedBox(height: 12),
         TextButton(onPressed: _busy ? null : _load, child: const Text('Actualiser')),
+        const SizedBox(height: 8),
+        const Text('Historique', style: TextStyle(fontWeight: FontWeight.w800)),
+        for (final session in _history.take(12))
+          ListTile(
+            dense: true,
+            title: Text('${session['opened_at'] ?? session['id']} · ${session['status']}'),
+            subtitle: Text('Attendu ${session['totals'] is Map ? (session['totals'] as Map)['expected'] : session['closing_expected'] ?? '—'} · écart ${session['variance'] ?? '—'}'),
+          ),
       ],
     );
   }

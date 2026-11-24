@@ -3,6 +3,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:uuid/uuid.dart';
 
+import '../api/api_client.dart';
+import '../api/api_error.dart';
 import '../providers/app_providers.dart';
 import '../theme/pos_theme.dart';
 import 'pos_dialogs.dart';
@@ -78,6 +80,12 @@ class _PosScreenState extends ConsumerState<PosScreen> {
   final _tendered = TextEditingController();
   final _kitchenNote = TextEditingController();
   final _search = TextEditingController();
+  final _customerName = TextEditingController();
+  final _customerPhone = TextEditingController();
+  final _deliveryAddress = TextEditingController();
+  final _deliveryNotes = TextEditingController();
+  int? _zoneId;
+  List<Map<String, dynamic>> _zones = [];
   bool _loading = true;
   String? _error;
 
@@ -121,6 +129,10 @@ class _PosScreenState extends ConsumerState<PosScreen> {
     _tendered.dispose();
     _kitchenNote.dispose();
     _search.dispose();
+    _customerName.dispose();
+    _customerPhone.dispose();
+    _deliveryAddress.dispose();
+    _deliveryNotes.dispose();
     super.dispose();
   }
 
@@ -193,12 +205,42 @@ class _PosScreenState extends ConsumerState<PosScreen> {
         .map((e) => Map<String, dynamic>.from(e as Map))
         .where((p) => _category == null || '${p['category_name']}' == _category)
         .where(_matchesSearch)
-        .toList();
+        .toList()
+      ..sort((a, b) {
+        final category = (int.tryParse('${a['category_sort']}') ?? 0).compareTo(int.tryParse('${b['category_sort']}') ?? 0);
+        if (category != 0) return category;
+        return (int.tryParse('${a['pos_position']}') ?? 0).compareTo(int.tryParse('${b['pos_position']}') ?? 0);
+      });
+  }
+
+  bool get _deliveryEnabled {
+    final value = _settings['delivery.enabled'];
+    return value != false && value != 0 && value != '0' && value != 'false';
+  }
+
+  bool _settingOn(String key) {
+    final value = _settings[key];
+    return value == true || value == 1 || value == '1' || value == 'true';
   }
 
   double get _total => _cart.fold(0, (sum, line) => sum + line.lineTotal);
 
-  int get _articleCount => _cart.fold<int>(0, (sum, line) => sum + line.quantity.round());
+  int get _articleCount => _cart.fold<int>(0, (sum, line) => sum + (line.measured ? 1 : line.quantity.round()));
+
+  bool get _deliveryReady {
+    if (_customerName.text.trim().isEmpty || _deliveryAddress.text.trim().isEmpty) return false;
+    if (_settingOn('delivery.require_phone') && _customerPhone.text.trim().isEmpty) return false;
+    if (_settingOn('delivery.require_zone') && _zoneId == null) return false;
+    return true;
+  }
+
+  Future<void> _loadZones() async {
+    try {
+      final response = await ref.read(dioProvider).get('/api/v1/delivery-zones');
+      final zones = apiList(response.data).where((zone) => zone['is_active'] != false).toList();
+      if (mounted) setState(() => _zones = zones);
+    } catch (_) {}
+  }
 
   bool get _salesBlocked {
     final require = _cash['require_open_session'] == true;
@@ -231,7 +273,6 @@ class _PosScreenState extends ConsumerState<PosScreen> {
   }
 
   Future<void> _addProduct(Map<String, dynamic> product) async {
-    if (_salesBlocked) return;
     final groups = posModifierGroups(product);
     final unit = '${product['unit'] ?? 'piece'}';
     final price = double.tryParse('${product['sale_price']}'.replaceAll(',', '.')) ?? 0;
@@ -289,8 +330,17 @@ class _PosScreenState extends ConsumerState<PosScreen> {
   }
 
   Future<void> _encaisser() async {
-    if (_cart.isEmpty || _salesBlocked) return;
-    final choice = await showPosPayDialog(context, total: _total, initialMethod: _payment);
+    if (_cart.isEmpty) return;
+    if (_orderType == 'delivery' && !_deliveryReady) {
+      setState(() => _error = 'Complétez la livraison : client, adresse, et zone ou téléphone si exigés.');
+      return;
+    }
+    final choice = await showPosPayDialog(
+      context,
+      total: _total,
+      initialMethod: _salesBlocked ? 'card' : _payment,
+      cashBlocked: _salesBlocked,
+    );
     if (choice == null || !mounted) return;
     setState(() {
       _payment = choice.method;
@@ -300,8 +350,16 @@ class _PosScreenState extends ConsumerState<PosScreen> {
   }
 
   Future<void> _checkout() async {
-    if (_cart.isEmpty || _salesBlocked) {
-      setState(() => _error = _salesBlocked ? 'Ouvrez le tiroir pour vendre.' : 'Panier vide.');
+    if (_cart.isEmpty) {
+      setState(() => _error = 'Panier vide.');
+      return;
+    }
+    if (_payment == 'cash' && _salesBlocked) {
+      setState(() => _error = 'Ouvrez le tiroir pour encaisser en espèces.');
+      return;
+    }
+    if (_orderType == 'delivery' && !_deliveryReady) {
+      setState(() => _error = 'Complétez la livraison : client, adresse, et zone ou téléphone si exigés.');
       return;
     }
 
@@ -325,6 +383,13 @@ class _PosScreenState extends ConsumerState<PosScreen> {
       'payment_method': _payment,
       if (_payment == 'cash') 'tendered': tendered,
       'kitchen_note': _kitchenNote.text.trim().isEmpty ? null : _kitchenNote.text.trim(),
+      if (_orderType == 'delivery') ...{
+        'customer_name': _customerName.text.trim(),
+        'customer_phone': _customerPhone.text.trim().isEmpty ? null : _customerPhone.text.trim(),
+        'delivery_address': _deliveryAddress.text.trim(),
+        'delivery_notes': _deliveryNotes.text.trim().isEmpty ? null : _deliveryNotes.text.trim(),
+        'delivery_zone_id': _zoneId,
+      },
       'lines': _cart
           .map(
             (l) => {
@@ -370,25 +435,35 @@ class _PosScreenState extends ConsumerState<PosScreen> {
               total: totalStr,
               orderType: _orderType,
               kitchenNote: note.isEmpty ? null : note,
+              taxLine: order is Map && order['tax_enabled'] == true ? 'TVA ${order['tax_total']}' : null,
             );
       } catch (_) {
         // Impression best-effort.
       }
 
+      final snapshot = List<Map<String, dynamic>>.from(cartSnapshot);
       setState(() {
         _cart.clear();
         _kitchenNote.clear();
         _tendered.clear();
+        _customerName.clear();
+        _customerPhone.clear();
+        _deliveryAddress.clear();
+        _deliveryNotes.clear();
+        _zoneId = null;
       });
       await widget.onCheckoutDone?.call();
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            result['offline'] == true
-                ? 'Vente enregistrée hors-ligne (sync plus tard)'
-                : 'Vente encaissée',
-          ),
+      await showDialog<void>(
+        context: context,
+        builder: (context) => _ReceiptDialog(
+          order: order is Map ? Map<String, dynamic>.from(order) : null,
+          fallbackLines: snapshot,
+          fallbackTotal: totalStr,
+          footer: '${_settings['business.ticket_footer'] ?? ''}',
+          logoUrl: '${_settings['business.logo_url'] ?? ''}',
+          businessName: '${_settings['business.name'] ?? 'Caisse'}',
+          offline: result['offline'] == true,
         ),
       );
     } on DioException catch (e) {
@@ -410,7 +485,7 @@ class _PosScreenState extends ConsumerState<PosScreen> {
       return const Center(child: CircularProgressIndicator());
     }
 
-    final canPay = !_salesBlocked && _cart.isNotEmpty && !_loading;
+    final canPay = _cart.isNotEmpty && !_loading;
 
     return SafeArea(
       child: Column(
@@ -538,7 +613,7 @@ class _PosScreenState extends ConsumerState<PosScreen> {
         children: [
           const Expanded(
             child: Text(
-              'Ouvrez le tiroir avant d’encaisser.',
+              'Les espèces exigent un tiroir ouvert. La carte reste possible.',
               style: TextStyle(color: Color(0xFFC2410C), fontWeight: FontWeight.w600),
             ),
           ),
@@ -634,7 +709,7 @@ class _PosScreenState extends ConsumerState<PosScreen> {
       borderRadius: BorderRadius.circular(16),
       clipBehavior: Clip.antiAlias,
       child: InkWell(
-        onTap: _salesBlocked ? null : () => _addProduct(product),
+        onTap: () => _addProduct(product),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
@@ -651,7 +726,7 @@ class _PosScreenState extends ConsumerState<PosScreen> {
                       shape: const CircleBorder(),
                       child: InkWell(
                         customBorder: const CircleBorder(),
-                        onTap: _salesBlocked ? null : () => _addProduct(product),
+                        onTap: () => _addProduct(product),
                         child: const SizedBox(
                           width: 28,
                           height: 28,
@@ -734,8 +809,10 @@ class _PosScreenState extends ConsumerState<PosScreen> {
                 _typeChip('dine_in', 'Sur place'),
                 const SizedBox(width: 6),
                 _typeChip('takeaway', 'À emporter'),
-                const SizedBox(width: 6),
-                _typeChip('delivery', 'Livraison'),
+                if (_deliveryEnabled) ...[
+                  const SizedBox(width: 6),
+                  _typeChip('delivery', 'Livraison'),
+                ],
               ],
             ),
           ),
@@ -762,6 +839,24 @@ class _PosScreenState extends ConsumerState<PosScreen> {
                     Text(_money(_total), style: const TextStyle(fontSize: 26, fontWeight: FontWeight.w800)),
                   ],
                 ),
+                if (_orderType == 'delivery') ...[
+                  const SizedBox(height: 8),
+                  _padLine('Client', _customerName, 'Nom du client'),
+                  _padLine('Téléphone', _customerPhone, 'Téléphone', phone: true),
+                  _padLine('Adresse', _deliveryAddress, 'Adresse de livraison'),
+                  _padLine('Notes', _deliveryNotes, 'Notes de livraison'),
+                  if (_zones.isNotEmpty)
+                    DropdownButton<int?>(
+                      value: _zoneId,
+                      isExpanded: true,
+                      hint: const Text('Zone'),
+                      items: [
+                        for (final zone in _zones)
+                          DropdownMenuItem(value: int.tryParse('${zone['id']}'), child: Text('${zone['name']} · ${zone['fee']}')),
+                      ],
+                      onChanged: (value) => setState(() => _zoneId = value),
+                    ),
+                ],
                 const SizedBox(height: 10),
                 Material(
                   color: Colors.white,
@@ -835,7 +930,10 @@ class _PosScreenState extends ConsumerState<PosScreen> {
         borderRadius: BorderRadius.circular(999),
         child: InkWell(
           borderRadius: BorderRadius.circular(999),
-          onTap: () => setState(() => _orderType = value),
+          onTap: () {
+            setState(() => _orderType = value);
+            if (value == 'delivery' && _zones.isEmpty) _loadZones();
+          },
           child: Padding(
             padding: const EdgeInsets.symmetric(vertical: 10),
             child: Text(
@@ -848,6 +946,23 @@ class _PosScreenState extends ConsumerState<PosScreen> {
               ),
             ),
           ),
+        ),
+      ),
+    );
+  }
+
+  Widget _padLine(String title, TextEditingController controller, String hint, {bool phone = false}) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 6),
+      child: InkWell(
+        onTap: () async {
+          final value = await showPosTextPad(context, title: title, initial: controller.text, hint: hint, phone: phone);
+          if (value == null) return;
+          setState(() => controller.text = value);
+        },
+        child: InputDecorator(
+          decoration: InputDecoration(labelText: title, isDense: true),
+          child: Text(controller.text.isEmpty ? hint : controller.text),
         ),
       ),
     );
@@ -908,6 +1023,67 @@ class _PosScreenState extends ConsumerState<PosScreen> {
         customBorder: const CircleBorder(),
         onTap: onPressed,
         child: SizedBox(width: 28, height: 28, child: Icon(icon, size: 16)),
+      ),
+    );
+  }
+}
+
+class _ReceiptDialog extends StatelessWidget {
+  const _ReceiptDialog({
+    required this.order,
+    required this.fallbackLines,
+    required this.fallbackTotal,
+    required this.footer,
+    required this.logoUrl,
+    required this.businessName,
+    required this.offline,
+  });
+
+  final Map<String, dynamic>? order;
+  final List<Map<String, dynamic>> fallbackLines;
+  final String fallbackTotal;
+  final String footer;
+  final String logoUrl;
+  final String businessName;
+  final bool offline;
+
+  @override
+  Widget build(BuildContext context) {
+    final business = order?['business'] is Map ? Map<String, dynamic>.from(order!['business'] as Map) : const <String, dynamic>{};
+    final items = order?['items'] is List ? order!['items'] as List : fallbackLines;
+    final total = order?['total'] ?? fallbackTotal;
+    final shownFooter = '${business['footer'] ?? footer}';
+    final shownLogo = '${business['logo_url'] ?? logoUrl}';
+    return Dialog(
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 460, maxHeight: 640),
+        child: ListView(
+          padding: const EdgeInsets.all(20),
+          children: [
+            if (shownLogo.isNotEmpty)
+              Image.network(shownLogo, height: 56, errorBuilder: (context, error, stack) => const SizedBox.shrink()),
+            Text('${business['name'] ?? businessName}', style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w800)),
+            Text(offline ? 'Enregistrée hors ligne' : '${order?['public_ref'] ?? ''}'),
+            const Divider(),
+            for (final raw in items)
+              if (raw is Map)
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 3),
+                  child: Row(
+                    children: [
+                      Expanded(child: Text('${raw['quantity']} × ${raw['name']}')),
+                      Text('${raw['line_total']}'),
+                    ],
+                  ),
+                ),
+            if (order?['tax_enabled'] == true) Text('TVA incluse ${order?['tax_total'] ?? ''}'),
+            const SizedBox(height: 8),
+            Text('Total $total', style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w800)),
+            if (shownFooter.trim().isNotEmpty) Text(shownFooter, style: const TextStyle(color: PosColors.muted)),
+            const SizedBox(height: 16),
+            FilledButton(onPressed: () => Navigator.pop(context), child: const Text('Nouvelle vente')),
+          ],
+        ),
       ),
     );
   }

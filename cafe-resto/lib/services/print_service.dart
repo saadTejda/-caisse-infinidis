@@ -109,6 +109,7 @@ class PrintService {
     required String total,
     required String orderType,
     String? kitchenNote,
+    String? taxLine,
   }) async {
     final businessName = '${settings['business.name'] ?? 'Caisse'}';
     final footer = '${settings['business.ticket_footer'] ?? ''}';
@@ -121,17 +122,24 @@ class PrintService {
         final lineTotal = line['line_total'];
         return '$qty x $name  $lineTotal';
       }),
+      if (taxLine != null && taxLine.isNotEmpty) taxLine,
       'TOTAL: $total',
     ];
 
-    final receipt = PrinterConfig.fromSettings(settings, 'receipt_printer');
-    final receiptBytes = buildTicket(
-      title: businessName,
-      lines: receiptLines,
-      paperWidth: receipt.paperWidth,
-      footer: footer,
-    );
-    await send(receipt, receiptBytes);
+    final autoPrint = settings['pos.auto_print'] == true ||
+        settings['pos.auto_print'] == 1 ||
+        settings['pos.auto_print'] == '1' ||
+        settings['pos.auto_print'] == 'true';
+    if (autoPrint) {
+      final receipt = PrinterConfig.fromSettings(settings, 'receipt_printer');
+      final receiptBytes = buildTicket(
+        title: businessName,
+        lines: receiptLines,
+        paperWidth: receipt.paperWidth,
+        footer: footer,
+      );
+      await send(receipt, receiptBytes);
+    }
 
     final kitchenLines = <String>[
       'CUISINE',

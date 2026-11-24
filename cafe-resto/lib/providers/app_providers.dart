@@ -2,6 +2,7 @@ import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../api/api_client.dart';
+import '../auth/staff_user.dart';
 import '../db/local_store.dart';
 import '../services/order_queue.dart';
 import '../services/print_service.dart';
@@ -18,6 +19,10 @@ final orderQueueProvider = Provider<OrderQueue>((ref) {
 });
 
 final printServiceProvider = Provider<PrintService>((_) => PrintService());
+
+final localeCodeProvider = StateProvider<String>((ref) => 'fr');
+
+final staffUserProvider = StateProvider<StaffUser>((ref) => StaffUser.empty);
 
 final onlineProvider = StreamProvider<bool>((ref) async* {
   final connectivity = Connectivity();

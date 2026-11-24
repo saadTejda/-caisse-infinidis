@@ -1,9 +1,14 @@
+import 'dart:convert';
+
 import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../auth/staff_user.dart';
+
 const _kHost = 'api_host';
 const _kToken = 'api_token';
+const _kUser = 'api_user';
 
 class SessionStore {
   Future<String?> getHost() async {
@@ -30,7 +35,25 @@ class SessionStore {
     }
   }
 
-  Future<void> clearAuth() => setToken(null);
+  Future<void> setUser(StaffUser user) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_kUser, jsonEncode(user.toJson()));
+  }
+
+  Future<StaffUser> getUser() async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString(_kUser);
+    if (raw == null || raw.isEmpty) return StaffUser.empty;
+    final decoded = jsonDecode(raw);
+    if (decoded is! Map) return StaffUser.empty;
+    return StaffUser.fromJson(Map<String, dynamic>.from(decoded));
+  }
+
+  Future<void> clearAuth() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(_kToken);
+    await prefs.remove(_kUser);
+  }
 }
 
 final sessionStoreProvider = Provider<SessionStore>((_) => SessionStore());

@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'api/api_client.dart';
+import 'providers/app_providers.dart';
 import 'screens/host_screen.dart';
 import 'screens/login_screen.dart';
 import 'screens/pos_shell.dart';
@@ -17,10 +19,24 @@ class CaisseApp extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final code = ref.watch(localeCodeProvider);
     return MaterialApp(
       title: 'Café Resto Caisse',
       debugShowCheckedModeBanner: false,
       theme: buildPosTheme(),
+      locale: Locale(code),
+      supportedLocales: const [Locale('fr'), Locale('ar'), Locale('en')],
+      localizationsDelegates: const [
+        GlobalMaterialLocalizations.delegate,
+        GlobalWidgetsLocalizations.delegate,
+        GlobalCupertinoLocalizations.delegate,
+      ],
+      builder: (context, child) {
+        return Directionality(
+          textDirection: code == 'ar' ? TextDirection.rtl : TextDirection.ltr,
+          child: child ?? const SizedBox.shrink(),
+        );
+      },
       home: const _BootstrapGate(),
     );
   }
@@ -48,7 +64,13 @@ class _BootstrapGateState extends ConsumerState<_BootstrapGate> {
     final token = await store.getToken();
     Widget next = const HostScreen();
     if (host != null && host.isNotEmpty) {
-      next = token != null && token.isNotEmpty ? const PosShell() : const LoginScreen();
+      if (token != null && token.isNotEmpty) {
+        final user = await store.getUser();
+        ref.read(localeCodeProvider.notifier).state = user.locale;
+        next = const PosShell();
+      } else {
+        next = const LoginScreen();
+      }
     }
     if (mounted) setState(() => _home = next);
   }

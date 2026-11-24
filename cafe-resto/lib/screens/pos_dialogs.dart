@@ -107,10 +107,11 @@ Future<PosPayChoice?> showPosPayDialog(
   BuildContext context, {
   required double total,
   required String initialMethod,
+  bool cashBlocked = false,
 }) {
   return showDialog<PosPayChoice>(
     context: context,
-    builder: (context) => _PayDialog(total: total, initialMethod: initialMethod),
+    builder: (context) => _PayDialog(total: total, initialMethod: initialMethod, cashBlocked: cashBlocked),
   );
 }
 
@@ -259,17 +260,18 @@ class _ExtrasDialogState extends State<_ExtrasDialog> {
 }
 
 class _PayDialog extends StatefulWidget {
-  const _PayDialog({required this.total, required this.initialMethod});
+  const _PayDialog({required this.total, required this.initialMethod, required this.cashBlocked});
 
   final double total;
   final String initialMethod;
+  final bool cashBlocked;
 
   @override
   State<_PayDialog> createState() => _PayDialogState();
 }
 
 class _PayDialogState extends State<_PayDialog> {
-  late String _method = widget.initialMethod == 'card' ? 'card' : 'cash';
+  late String _method = widget.cashBlocked || widget.initialMethod == 'card' ? 'card' : 'cash';
   late String _buffer = widget.total.toStringAsFixed(2);
   bool _fresh = true;
 
@@ -356,6 +358,11 @@ class _PayDialogState extends State<_PayDialog> {
               _segment('card', 'Carte'),
             ],
           ),
+          if (widget.cashBlocked)
+            const Padding(
+              padding: EdgeInsets.only(top: 10),
+              child: Text('Ouvrez le tiroir pour encaisser en espèces. La carte reste possible.', style: TextStyle(color: PosColors.muted)),
+            ),
           if (_method == 'cash') ...[
             const SizedBox(height: 14),
             Container(
@@ -423,7 +430,7 @@ class _PayDialogState extends State<_PayDialog> {
         borderRadius: BorderRadius.circular(12),
         child: InkWell(
           borderRadius: BorderRadius.circular(12),
-          onTap: () => setState(() => _method = value),
+          onTap: value == 'cash' && widget.cashBlocked ? null : () => setState(() => _method = value),
           child: Padding(
             padding: const EdgeInsets.symmetric(vertical: 12),
             child: Text(

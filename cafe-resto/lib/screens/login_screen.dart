@@ -3,6 +3,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../api/api_client.dart';
+import '../api/api_error.dart';
+import '../auth/staff_user.dart';
+import '../l10n/caisse_text.dart';
 import '../providers/app_providers.dart';
 import '../theme/pos_theme.dart';
 import 'pos_shell.dart';
@@ -34,9 +37,32 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
           'password': _password.text,
         },
       );
-      final token = response.data['data']['token'] as String;
+      final data = apiMap(response.data);
+      final token = '${data['token'] ?? ''}';
+      final user = StaffUser.fromJson(data['user'] is Map ? Map<String, dynamic>.from(data['user'] as Map) : const {});
+      if (!user.isActive || token.isEmpty) {
+        setState(() => _error = tx(ref.read(localeCodeProvider), 'inactive'));
+        return;
+      }
       await ref.read(sessionStoreProvider).setToken(token);
-      await ref.read(syncServiceProvider).bootstrap();
+      await ref.read(sessionStoreProvider).setUser(user);
+      ref.read(localeCodeProvider.notifier).state = user.locale;
+      ref.read(staffUserProvider.notifier).state = user;
+      if (user.can('pos.access')) {
+        await ref.read(syncServiceProvider).bootstrap();
+      }
+      try {
+        final me = await ref.read(dioProvider).get('/api/v1/auth/me');
+        final fresh = StaffUser.fromJson(apiMap(me.data));
+        if (!fresh.isActive) {
+          await ref.read(sessionStoreProvider).clearAuth();
+          setState(() => _error = tx(user.locale, 'inactive'));
+          return;
+        }
+        await ref.read(sessionStoreProvider).setUser(fresh);
+        ref.read(localeCodeProvider.notifier).state = fresh.locale;
+        ref.read(staffUserProvider.notifier).state = fresh;
+      } catch (_) {}
       if (!mounted) return;
       await Navigator.of(context).pushReplacement(
         MaterialPageRoute(builder: (_) => const PosShell()),
