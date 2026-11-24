@@ -46,6 +46,14 @@ class SyncService {
     return {};
   }
 
+  Future<Map<String, dynamic>> user() async {
+    final raw = await _store.getJson('user');
+    if (raw is Map) {
+      return Map<String, dynamic>.from(raw);
+    }
+    return {};
+  }
+
   Future<Map<String, dynamic>> cashStatus() async {
     final raw = await _store.getJson('cash_status');
     if (raw is Map) {

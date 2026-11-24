@@ -19,11 +19,21 @@ class PosShell extends ConsumerStatefulWidget {
 class _PosShellState extends ConsumerState<PosShell> {
   int _index = 0;
   int _pending = 0;
+  int _refreshToken = 0;
+  String _userName = 'Caisse';
 
   @override
   void initState() {
     super.initState();
     _refreshPending();
+    _loadUser();
+  }
+
+  Future<void> _loadUser() async {
+    final user = await ref.read(syncServiceProvider).user();
+    final name = user['name'] ?? user['full_name'] ?? user['email'];
+    if (!mounted || name == null || '$name'.trim().isEmpty) return;
+    setState(() => _userName = '$name'.trim());
   }
 
   Future<void> _refreshPending() async {
@@ -43,11 +53,12 @@ class _PosShellState extends ConsumerState<PosShell> {
       final synced = await ref.read(orderQueueProvider).flush();
       await ref.read(syncServiceProvider).bootstrap();
       await _refreshPending();
+      await _loadUser();
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Sync OK ($synced vente(s) rejouée(s))')),
       );
-      setState(() {});
+      setState(() => _refreshToken++);
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -68,74 +79,59 @@ class _PosShellState extends ConsumerState<PosShell> {
     );
   }
 
+  void _openPrinters() {
+    Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => const DeviceSettingsScreen()),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
-    final online = ref.watch(onlineProvider).valueOrNull ?? true;
-
     return Scaffold(
-      appBar: AppBar(
-        title: Text(_index == 0 ? 'Caisse' : 'Tiroir'),
-        actions: [
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 8),
-            child: Center(
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                decoration: BoxDecoration(
-                  color: online ? PosColors.success : PosColors.danger,
-                  borderRadius: BorderRadius.circular(999),
-                ),
-                child: Text(
-                  online ? 'En ligne' : 'Hors ligne',
-                  style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700),
-                ),
-              ),
-            ),
-          ),
-          if (_pending > 0)
-            Padding(
-              padding: const EdgeInsets.only(right: 4),
-              child: Center(
-                child: Text(
-                  '$_pending en attente',
-                  style: const TextStyle(fontSize: 12, color: Colors.white70),
-                ),
-              ),
-            ),
-          IconButton(
-            tooltip: 'Synchroniser',
-            onPressed: _sync,
-            icon: const Icon(Icons.sync),
-          ),
-          IconButton(
-            tooltip: 'Imprimantes',
-            onPressed: () {
-              Navigator.of(context).push(
-                MaterialPageRoute(builder: (_) => const DeviceSettingsScreen()),
-              );
-            },
-            icon: const Icon(Icons.print),
-          ),
-          IconButton(
-            tooltip: 'Quitter',
-            onPressed: _logout,
-            icon: const Icon(Icons.logout),
-          ),
-        ],
-      ),
+      backgroundColor: PosColors.pos,
       body: IndexedStack(
         index: _index,
         children: [
-          PosScreen(onCheckoutDone: _refreshPending),
-          const CashScreen(),
-        ],
-      ),
-      bottomNavigationBar: NavigationBar(
-        selectedIndex: _index,
-        onDestinationSelected: (i) => setState(() => _index = i),
-        destinations: const [
-          NavigationDestination(icon: Icon(Icons.point_of_sale), label: 'Caisse'),
-          NavigationDestination(icon: Icon(Icons.account_balance_wallet), label: 'Tiroir'),
+          PosScreen(
+            userName: _userName,
+            pendingCount: _pending,
+            refreshToken: _refreshToken,
+            onCheckoutDone: _refreshPending,
+            onOpenDrawer: () => setState(() => _index = 1),
+            onBack: _logout,
+            onSync: _sync,
+            onPrinters: _openPrinters,
+          ),
+          Column(
+            children: [
+              Material(
+                color: Colors.white,
+                child: SafeArea(
+                  bottom: false,
+                  child: SizedBox(
+                    height: 56,
+                    child: Row(
+                      children: [
+                        TextButton.icon(
+                          onPressed: () => setState(() {
+                            _index = 0;
+                            _refreshToken++;
+                          }),
+                          icon: const Icon(Icons.arrow_back, size: 18),
+                          label: const Text('Retour'),
+                        ),
+                        const Text(
+                          'Tiroir',
+                          style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+              const Expanded(child: CashScreen()),
+            ],
+          ),
         ],
       ),
     );
