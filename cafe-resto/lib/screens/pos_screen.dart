@@ -5,6 +5,7 @@ import 'package:uuid/uuid.dart';
 
 import '../providers/app_providers.dart';
 import '../theme/pos_theme.dart';
+import 'pos_dialogs.dart';
 
 class PosScreen extends ConsumerStatefulWidget {
   const PosScreen({
@@ -39,15 +40,31 @@ class _CartLine {
     required this.unitPrice,
     required this.quantity,
     required this.color,
+    this.modifiers = const [],
+    this.measured = false,
+    this.lineTotalOverride,
   });
 
   final int productId;
   final String name;
   final double unitPrice;
   final Color color;
+  final List<PosModifier> modifiers;
+  final bool measured;
+  final double? lineTotalOverride;
   double quantity;
 
-  double get lineTotal => unitPrice * quantity;
+  String get comboKey {
+    final ids = modifiers.map((modifier) => modifier.id).toList()..sort();
+    return '$productId:${ids.join(',')}';
+  }
+
+  String get displayName {
+    if (modifiers.isEmpty) return name;
+    return '$name (${modifiers.map((modifier) => modifier.name).join(', ')})';
+  }
+
+  double get lineTotal => lineTotalOverride ?? unitPrice * quantity;
 }
 
 class _PosScreenState extends ConsumerState<PosScreen> {
@@ -83,6 +100,9 @@ class _PosScreenState extends ConsumerState<PosScreen> {
   void initState() {
     super.initState();
     _search.addListener(() {
+      if (mounted) setState(() {});
+    });
+    _kitchenNote.addListener(() {
       if (mounted) setState(() {});
     });
     _load();
@@ -210,22 +230,59 @@ class _PosScreenState extends ConsumerState<PosScreen> {
     return '${parts[0]},${parts[1]} DH';
   }
 
-  void _addProduct(Map<String, dynamic> product) {
+  Future<void> _addProduct(Map<String, dynamic> product) async {
     if (_salesBlocked) return;
-    final id = product['id'] as int;
-    final existing = _cart.where((l) => l.productId == id).toList();
-    if (existing.isNotEmpty) {
-      setState(() => existing.first.quantity += 1);
-      return;
+    final groups = posModifierGroups(product);
+    final unit = '${product['unit'] ?? 'piece'}';
+    final price = double.tryParse('${product['sale_price']}'.replaceAll(',', '.')) ?? 0;
+    final name = '${product['name']}';
+    double? measuredQty;
+    double? measuredTotal;
+    if (posIsMeasured(unit)) {
+      final weight = await showPosWeightDialog(
+        context,
+        productName: name,
+        unitPrice: price,
+        unit: unit,
+      );
+      if (weight == null || !mounted) return;
+      measuredQty = weight.quantity;
+      measuredTotal = weight.lineTotal;
     }
+    var modifiers = const <PosModifier>[];
+    if (groups.isNotEmpty) {
+      final picked = await showPosExtrasDialog(context, productName: name, groups: groups);
+      if (picked == null || !mounted) return;
+      modifiers = picked;
+    }
+    final extra = modifiers.fold<double>(0, (sum, modifier) => sum + modifier.priceDelta);
+    final id = product['id'] as int;
     setState(() {
+      if (measuredQty == null) {
+        final probe = _CartLine(
+          productId: id,
+          name: name,
+          unitPrice: price + extra,
+          quantity: 1,
+          color: _tileColor(product),
+          modifiers: modifiers,
+        );
+        final existing = _cart.where((line) => !line.measured && line.comboKey == probe.comboKey).toList();
+        if (existing.isNotEmpty) {
+          existing.first.quantity += 1;
+          return;
+        }
+      }
       _cart.add(
         _CartLine(
           productId: id,
-          name: '${product['name']}',
-          unitPrice: double.tryParse('${product['sale_price']}'.replaceAll(',', '.')) ?? 0,
-          quantity: 1,
+          name: name,
+          unitPrice: price + extra,
+          quantity: measuredQty ?? 1,
           color: _tileColor(product),
+          modifiers: modifiers,
+          measured: measuredQty != null,
+          lineTotalOverride: measuredTotal == null ? null : measuredTotal + extra * measuredQty!,
         ),
       );
     });
@@ -233,15 +290,7 @@ class _PosScreenState extends ConsumerState<PosScreen> {
 
   Future<void> _encaisser() async {
     if (_cart.isEmpty || _salesBlocked) return;
-    final choice = await showModalBottomSheet<_PayChoice>(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.white,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (context) => _PaySheet(total: _total, initialMethod: _payment),
-    );
+    final choice = await showPosPayDialog(context, total: _total, initialMethod: _payment);
     if (choice == null || !mounted) return;
     setState(() {
       _payment = choice.method;
@@ -281,7 +330,7 @@ class _PosScreenState extends ConsumerState<PosScreen> {
             (l) => {
               'product_id': l.productId,
               'quantity': l.quantity,
-              'modifiers': <int>[],
+              'modifiers': l.modifiers.map((modifier) => modifier.id).toList(),
             },
           )
           .toList(),
@@ -298,7 +347,7 @@ class _PosScreenState extends ConsumerState<PosScreen> {
       final cartSnapshot = _cart
           .map(
             (l) => {
-              'name': l.name,
+              'name': l.displayName,
               'quantity': l.quantity,
               'line_total': l.lineTotal.toStringAsFixed(2),
             },
@@ -428,22 +477,40 @@ class _PosScreenState extends ConsumerState<PosScreen> {
             ),
             const SizedBox(width: 16),
             Expanded(
-              child: TextField(
-                controller: _search,
-                decoration: InputDecoration(
-                  hintText: 'Rechercher un produit',
-                  prefixIcon: const Icon(Icons.search, size: 20),
-                  isDense: true,
-                  filled: true,
-                  fillColor: const Color(0xFFF3F4F6),
-                  contentPadding: const EdgeInsets.symmetric(vertical: 12),
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(999),
-                    borderSide: BorderSide.none,
-                  ),
-                  enabledBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(999),
-                    borderSide: BorderSide.none,
+              child: Material(
+                color: const Color(0xFFF3F4F6),
+                borderRadius: BorderRadius.circular(999),
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(999),
+                  onTap: () async {
+                    final value = await showPosTextPad(
+                      context,
+                      title: 'Rechercher un produit',
+                      initial: _search.text,
+                      hint: 'Rechercher un produit',
+                    );
+                    if (value == null) return;
+                    _search.text = value;
+                  },
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                    child: Row(
+                      children: [
+                        const Icon(Icons.search, size: 20, color: PosColors.muted),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            _search.text.isEmpty ? 'Rechercher un produit' : _search.text,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color: _search.text.isEmpty ? PosColors.muted : PosColors.ink,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
                 ),
               ),
@@ -696,12 +763,43 @@ class _PosScreenState extends ConsumerState<PosScreen> {
                   ],
                 ),
                 const SizedBox(height: 10),
-                TextField(
-                  controller: _kitchenNote,
-                  decoration: const InputDecoration(
-                    labelText: 'Note cuisine',
-                    hintText: 'Message pour le cuisinier sur le ticket',
-                    isDense: true,
+                Material(
+                  color: Colors.white,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    side: const BorderSide(color: PosColors.line),
+                  ),
+                  child: InkWell(
+                    borderRadius: BorderRadius.circular(12),
+                    onTap: () async {
+                      final value = await showPosTextPad(
+                        context,
+                        title: 'Note cuisine',
+                        initial: _kitchenNote.text,
+                        hint: 'Message pour le cuisinier sur le ticket',
+                      );
+                      if (value == null) return;
+                      _kitchenNote.text = value;
+                    },
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text('Note cuisine', style: TextStyle(fontSize: 12, color: PosColors.muted, fontWeight: FontWeight.w700)),
+                          const SizedBox(height: 2),
+                          Text(
+                            _kitchenNote.text.isEmpty ? 'Message pour le cuisinier sur le ticket' : _kitchenNote.text,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color: _kitchenNote.text.isEmpty ? PosColors.muted : PosColors.ink,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
                   ),
                 ),
                 if (_error != null) ...[
@@ -772,8 +870,9 @@ class _PosScreenState extends ConsumerState<PosScreen> {
           ),
           const SizedBox(width: 8),
           Expanded(
-            child: Text(line.name, maxLines: 2, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w600)),
+            child: Text(line.displayName, maxLines: 2, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w600)),
           ),
+          if (!line.measured)
           _roundButton(
             icon: Icons.remove,
             onPressed: () => setState(() {
@@ -785,7 +884,7 @@ class _PosScreenState extends ConsumerState<PosScreen> {
             width: 22,
             child: Text(qty, textAlign: TextAlign.center, style: const TextStyle(fontWeight: FontWeight.w800)),
           ),
-          _roundButton(icon: Icons.add, onPressed: () => setState(() => line.quantity += 1)),
+          if (!line.measured) _roundButton(icon: Icons.add, onPressed: () => setState(() => line.quantity += 1)),
           const SizedBox(width: 6),
           SizedBox(
             width: 78,
@@ -814,119 +913,3 @@ class _PosScreenState extends ConsumerState<PosScreen> {
   }
 }
 
-class _PayChoice {
-  const _PayChoice({required this.method, this.tendered});
-
-  final String method;
-  final double? tendered;
-}
-
-class _PaySheet extends StatefulWidget {
-  const _PaySheet({required this.total, required this.initialMethod});
-
-  final double total;
-  final String initialMethod;
-
-  @override
-  State<_PaySheet> createState() => _PaySheetState();
-}
-
-class _PaySheetState extends State<_PaySheet> {
-  late String _method = widget.initialMethod == 'card' ? 'card' : 'cash';
-  late final TextEditingController _received = TextEditingController(
-    text: widget.total.toStringAsFixed(2),
-  );
-  String? _error;
-
-  @override
-  void dispose() {
-    _received.dispose();
-    super.dispose();
-  }
-
-  void _confirm() {
-    if (_method == 'card') {
-      Navigator.of(context).pop(const _PayChoice(method: 'card'));
-      return;
-    }
-    final amount = double.tryParse(_received.text.replaceAll(',', '.'));
-    if (amount == null || amount < widget.total) {
-      setState(() => _error = 'Montant reçu insuffisant.');
-      return;
-    }
-    Navigator.of(context).pop(_PayChoice(method: 'cash', tendered: amount));
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final parts = widget.total.toStringAsFixed(2).split('.');
-    return Padding(
-      padding: EdgeInsets.fromLTRB(20, 16, 20, 16 + MediaQuery.viewInsetsOf(context).bottom),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          const Text('Encaisser', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w800)),
-          const SizedBox(height: 4),
-          Text('Total ${parts[0]},${parts[1]} DH', style: const TextStyle(color: PosColors.muted)),
-          const SizedBox(height: 16),
-          Row(
-            children: [
-              _methodChip('cash', 'Espèces'),
-              const SizedBox(width: 8),
-              _methodChip('card', 'Carte'),
-            ],
-          ),
-          if (_method == 'cash') ...[
-            const SizedBox(height: 12),
-            TextField(
-              controller: _received,
-              autofocus: true,
-              keyboardType: const TextInputType.numberWithOptions(decimal: true),
-              decoration: const InputDecoration(labelText: 'Reçu'),
-            ),
-          ],
-          if (_error != null) ...[
-            const SizedBox(height: 8),
-            Text(_error!, style: const TextStyle(color: PosColors.danger)),
-          ],
-          const SizedBox(height: 16),
-          FilledButton(
-            onPressed: _confirm,
-            style: FilledButton.styleFrom(
-              backgroundColor: const Color(0xFFE6B325),
-              foregroundColor: const Color(0xFF3F2E05),
-              minimumSize: const Size.fromHeight(48),
-            ),
-            child: const Text('Confirmer', style: TextStyle(fontWeight: FontWeight.w800)),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _methodChip(String value, String label) {
-    final selected = _method == value;
-    return Expanded(
-      child: Material(
-        color: selected ? const Color(0xFF111827) : const Color(0xFFF3F4F6),
-        borderRadius: BorderRadius.circular(999),
-        child: InkWell(
-          borderRadius: BorderRadius.circular(999),
-          onTap: () => setState(() => _method = value),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(vertical: 10),
-            child: Text(
-              label,
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                color: selected ? Colors.white : PosColors.ink,
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}

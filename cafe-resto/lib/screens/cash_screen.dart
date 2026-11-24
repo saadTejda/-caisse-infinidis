@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../api/api_client.dart';
 import '../providers/app_providers.dart';
 import '../theme/pos_theme.dart';
+import 'pos_dialogs.dart';
 
 class CashScreen extends ConsumerStatefulWidget {
   const CashScreen({super.key});
@@ -27,6 +28,47 @@ class _CashScreenState extends ConsumerState<CashScreen> {
   void initState() {
     super.initState();
     _load();
+  }
+
+  Future<void> _editAmount(TextEditingController controller, String title) async {
+    final value = await showPosAmountPad(context, title: title, initial: controller.text);
+    if (value == null || !mounted) return;
+    setState(() => controller.text = value);
+  }
+
+  Future<void> _editText(TextEditingController controller, String title) async {
+    final value = await showPosTextPad(context, title: title, initial: controller.text, hint: title);
+    if (value == null || !mounted) return;
+    setState(() => controller.text = value);
+  }
+
+  Widget _padField(TextEditingController controller, String label, VoidCallback onTap) {
+    final empty = controller.text.trim().isEmpty;
+    return Material(
+      color: Colors.white,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+        side: const BorderSide(color: PosColors.line),
+      ),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(12),
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(label, style: const TextStyle(fontSize: 12, color: PosColors.muted, fontWeight: FontWeight.w700)),
+              const SizedBox(height: 2),
+              Text(
+                empty ? label : controller.text,
+                style: TextStyle(color: empty ? PosColors.muted : PosColors.ink, fontWeight: FontWeight.w600),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 
   Future<void> _load() async {
@@ -147,11 +189,7 @@ class _CashScreenState extends ConsumerState<CashScreen> {
         ],
         const SizedBox(height: 16),
         if (!isOpen) ...[
-          TextField(
-            controller: _opening,
-            decoration: const InputDecoration(labelText: 'Fond de caisse'),
-            keyboardType: const TextInputType.numberWithOptions(decimal: true),
-          ),
+          _padField(_opening, 'Fond de caisse', () => _editAmount(_opening, 'Fond de caisse')),
           const SizedBox(height: 12),
           ElevatedButton(
             onPressed: _busy ? null : _open,
@@ -187,24 +225,13 @@ class _CashScreenState extends ConsumerState<CashScreen> {
             ],
           ),
           const SizedBox(height: 8),
-          TextField(
-            controller: _movementAmount,
-            decoration: const InputDecoration(labelText: 'Montant'),
-            keyboardType: const TextInputType.numberWithOptions(decimal: true),
-          ),
+          _padField(_movementAmount, 'Montant', () => _editAmount(_movementAmount, 'Montant')),
           const SizedBox(height: 8),
-          TextField(
-            controller: _movementReason,
-            decoration: const InputDecoration(labelText: 'Motif'),
-          ),
+          _padField(_movementReason, 'Motif', () => _editText(_movementReason, 'Motif')),
           const SizedBox(height: 8),
           ElevatedButton(onPressed: _busy ? null : _move, child: const Text('Enregistrer mouvement')),
           const Divider(height: 32),
-          TextField(
-            controller: _counted,
-            decoration: const InputDecoration(labelText: 'Espèces comptées'),
-            keyboardType: const TextInputType.numberWithOptions(decimal: true),
-          ),
+          _padField(_counted, 'Espèces comptées', () => _editAmount(_counted, 'Espèces comptées')),
           const SizedBox(height: 8),
           ElevatedButton(
             style: ElevatedButton.styleFrom(backgroundColor: PosColors.danger),
