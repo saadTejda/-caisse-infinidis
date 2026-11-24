@@ -9,6 +9,10 @@ android/
 ios/
 test/widget_test.dart
 *.apk
+# Café Resto versionne son projet Android. Les autres apps le régénèrent dans Actions.
+!cafe-resto/android/
+!cafe-resto/android/**
+!cafe-resto/test/widget_test.dart
 *.jks
 *.keystore
 *.p12
