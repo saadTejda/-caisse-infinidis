@@ -34,13 +34,39 @@ android {
     }
 
     signingConfigs {
+        // v1 est nécessaire : le gestionnaire de fichiers des tablettes Lenovo
+        // ferme le popup d’installation si l’APK n’a que la signature v2.
+        getByName("debug") {
+            enableV1Signing = true
+            enableV2Signing = true
+            enableV3Signing = true
+        }
         if (hasReleaseKey) {
             create("release") {
                 storeFile = file(restoKeystore!!)
                 storePassword = restoKeystorePassword
                 keyAlias = System.getenv("CAISSE_RESTO_KEY_ALIAS") ?: "cafe-resto"
                 keyPassword = restoKeystorePassword
+                enableV1Signing = true
+                enableV2Signing = true
+                enableV3Signing = true
             }
+        }
+    }
+
+    androidComponents {
+        onVariants { variant ->
+            variant.signingConfig?.enableV1Signing?.set(true)
+            variant.signingConfig?.enableV2Signing?.set(true)
+            variant.signingConfig?.enableV3Signing?.set(true)
+        }
+    }
+
+    packaging {
+        jniLibs {
+            // Compresse les .so. Sans ça, l’installation depuis Fichiers échoue
+            // sur les tablettes qui n’acceptent pas les bibliothèques 16 Ko.
+            useLegacyPackaging = true
         }
     }
 
