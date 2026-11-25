@@ -106,12 +106,60 @@ Future<List<PosModifier>?> showPosExtrasDialog(
 Future<PosPayChoice?> showPosPayDialog(
   BuildContext context, {
   required double total,
+  double deliveryFee = 0,
   required String initialMethod,
   bool cashBlocked = false,
 }) {
   return showDialog<PosPayChoice>(
     context: context,
-    builder: (context) => _PayDialog(total: total, initialMethod: initialMethod, cashBlocked: cashBlocked),
+    builder: (context) => _PayDialog(
+      total: total,
+      deliveryFee: deliveryFee,
+      initialMethod: initialMethod,
+      cashBlocked: cashBlocked,
+    ),
+  );
+}
+
+class DeliveryDraft {
+  const DeliveryDraft({
+    required this.name,
+    required this.phone,
+    required this.address,
+    required this.notes,
+    required this.zoneId,
+  });
+
+  final String name;
+  final String phone;
+  final String address;
+  final String notes;
+  final int? zoneId;
+}
+
+Future<DeliveryDraft?> showDeliveryWizard(
+  BuildContext context, {
+  required String name,
+  required String phone,
+  required String address,
+  required String notes,
+  required List<Map<String, dynamic>> zones,
+  required int? zoneId,
+  required bool requirePhone,
+  required bool requireZone,
+}) {
+  return showDialog<DeliveryDraft>(
+    context: context,
+    builder: (context) => _DeliveryWizard(
+      name: name,
+      phone: phone,
+      address: address,
+      notes: notes,
+      zones: zones,
+      zoneId: zoneId,
+      requirePhone: requirePhone,
+      requireZone: requireZone,
+    ),
   );
 }
 
@@ -260,9 +308,15 @@ class _ExtrasDialogState extends State<_ExtrasDialog> {
 }
 
 class _PayDialog extends StatefulWidget {
-  const _PayDialog({required this.total, required this.initialMethod, required this.cashBlocked});
+  const _PayDialog({
+    required this.total,
+    required this.deliveryFee,
+    required this.initialMethod,
+    required this.cashBlocked,
+  });
 
   final double total;
+  final double deliveryFee;
   final String initialMethod;
   final bool cashBlocked;
 
@@ -272,10 +326,12 @@ class _PayDialog extends StatefulWidget {
 
 class _PayDialogState extends State<_PayDialog> {
   late String _method = widget.cashBlocked || widget.initialMethod == 'card' ? 'card' : 'cash';
-  late String _buffer = widget.total.toStringAsFixed(2);
+  late String _buffer = (widget.total + widget.deliveryFee).toStringAsFixed(2);
   bool _fresh = true;
 
-  int get _totalCents => (widget.total * 100).round();
+  double get _due => widget.total + widget.deliveryFee;
+
+  int get _totalCents => (_due * 100).round();
 
   int get _receivedCents {
     final parsed = double.tryParse(_buffer.replaceAll(',', '.'));
@@ -344,12 +400,13 @@ class _PayDialogState extends State<_PayDialog> {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         mainAxisSize: MainAxisSize.min,
         children: [
-          Row(
-            children: [
-              const Expanded(child: Text('Encaisser', style: TextStyle(fontSize: 22, fontWeight: FontWeight.w800))),
-              Text(posMoney(widget.total), style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w800)),
-            ],
-          ),
+          const Text('Encaisser', style: TextStyle(fontSize: 22, fontWeight: FontWeight.w800)),
+          const SizedBox(height: 8),
+          if (widget.deliveryFee > 0) ...[
+            _moneyRow('Commande', widget.total),
+            _moneyRow('Livraison', widget.deliveryFee),
+          ],
+          _moneyRow('Total', _due, strong: true),
           const SizedBox(height: 14),
           Row(
             children: [
@@ -393,7 +450,7 @@ class _PayDialogState extends State<_PayDialog> {
               ],
             ),
             const SizedBox(height: 12),
-            _keypad(onKey: _press),
+            _keypad(onKey: _press, aspect: 2.6, keyHeight: 40),
             const SizedBox(height: 10),
             Row(
               children: [
@@ -417,6 +474,19 @@ class _PayDialogState extends State<_PayDialog> {
               Navigator.of(context).pop(PosPayChoice(method: 'cash', tendered: amount));
             },
           ),
+        ],
+      ),
+    );
+  }
+
+  Widget _moneyRow(String label, double amount, {bool strong = false}) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 4),
+      child: Row(
+        children: [
+          Text(label, style: TextStyle(color: strong ? PosColors.ink : PosColors.muted, fontWeight: FontWeight.w700)),
+          const Spacer(),
+          Text(posMoney(amount), style: TextStyle(fontSize: strong ? 22 : 15, fontWeight: FontWeight.w800)),
         ],
       ),
     );
@@ -745,8 +815,9 @@ class _TextPadState extends State<_TextPad> {
 
   @override
   Widget build(BuildContext context) {
+    final screen = MediaQuery.sizeOf(context).width;
     return _DialogCard(
-      width: 720,
+      width: widget.phone ? (screen - 32).clamp(280, 380) : (screen - 32).clamp(320, 560),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         mainAxisSize: MainAxisSize.min,
@@ -772,7 +843,7 @@ class _TextPadState extends State<_TextPad> {
           ),
           const SizedBox(height: 12),
           if (widget.phone)
-            _keypad(keys: _phoneKeys, onKey: _press)
+            _keypad(keys: _phoneKeys, onKey: _press, aspect: 3.2, keyHeight: 36)
           else ...[
             for (final row in _rows) ...[
               _letterRow(row),
@@ -828,22 +899,27 @@ class _TextPadState extends State<_TextPad> {
   }
 }
 
-Widget _keypad({List<String> keys = const ['1', '2', '3', '4', '5', '6', '7', '8', '9', ',', '0', 'back'], required void Function(String key) onKey}) {
+Widget _keypad({
+  List<String> keys = const ['1', '2', '3', '4', '5', '6', '7', '8', '9', ',', '0', 'back'],
+  required void Function(String key) onKey,
+  double aspect = 2.4,
+  double keyHeight = 42,
+}) {
   return GridView.count(
     crossAxisCount: 3,
     shrinkWrap: true,
     physics: const NeverScrollableScrollPhysics(),
-    mainAxisSpacing: 8,
-    crossAxisSpacing: 8,
-    childAspectRatio: 1.7,
+    mainAxisSpacing: 6,
+    crossAxisSpacing: 6,
+    childAspectRatio: aspect,
     children: [
       for (final key in keys)
-        _keyButton(key == 'back' ? '⌫' : key, onTap: () => onKey(key)),
+        _keyButton(key == 'back' ? '⌫' : key, onTap: () => onKey(key), height: keyHeight),
     ],
   );
 }
 
-Widget _keyButton(String label, {required VoidCallback onTap, bool flex = true, bool wide = false, bool active = false}) {
+Widget _keyButton(String label, {required VoidCallback onTap, bool flex = true, bool wide = false, bool active = false, double height = 42}) {
   final button = Material(
     color: active ? const Color(0xFF111827) : const Color(0xFFF3F4F6),
     borderRadius: BorderRadius.circular(12),
@@ -851,7 +927,7 @@ Widget _keyButton(String label, {required VoidCallback onTap, bool flex = true, 
       borderRadius: BorderRadius.circular(12),
       onTap: onTap,
       child: Container(
-        height: 48,
+        height: height,
         width: wide ? 180 : null,
         alignment: Alignment.center,
         child: Text(
@@ -913,4 +989,184 @@ Widget _actions({
       ),
     ],
   );
+}
+
+class _DeliveryWizard extends StatefulWidget {
+  const _DeliveryWizard({
+    required this.name,
+    required this.phone,
+    required this.address,
+    required this.notes,
+    required this.zones,
+    required this.zoneId,
+    required this.requirePhone,
+    required this.requireZone,
+  });
+
+  final String name;
+  final String phone;
+  final String address;
+  final String notes;
+  final List<Map<String, dynamic>> zones;
+  final int? zoneId;
+  final bool requirePhone;
+  final bool requireZone;
+
+  @override
+  State<_DeliveryWizard> createState() => _DeliveryWizardState();
+}
+
+class _DeliveryWizardState extends State<_DeliveryWizard> {
+  late String _name = widget.name;
+  late String _phone = widget.phone;
+  late String _address = widget.address;
+  late String _notes = widget.notes;
+  late int? _zoneId = widget.zoneId;
+  int _step = 0;
+
+  static const _steps = ['Client', 'Téléphone', 'Adresse', 'Zone'];
+
+  bool get _stepReady {
+    switch (_step) {
+      case 0:
+        return _name.trim().isNotEmpty;
+      case 1:
+        return !widget.requirePhone || _phone.trim().isNotEmpty;
+      case 2:
+        return _address.trim().isNotEmpty;
+      default:
+        return !widget.requireZone || _zoneId != null;
+    }
+  }
+
+  Future<void> _editText({required String title, required String initial, required String hint, required ValueChanged<String> apply, bool phone = false}) async {
+    final value = await showPosTextPad(context, title: title, initial: initial, hint: hint, phone: phone);
+    if (value == null) return;
+    setState(() => apply(value));
+  }
+
+  void _next() {
+    if (!_stepReady) return;
+    if (_step < _steps.length - 1) {
+      setState(() => _step += 1);
+      return;
+    }
+    Navigator.of(context).pop(
+      DeliveryDraft(name: _name.trim(), phone: _phone.trim(), address: _address.trim(), notes: _notes.trim(), zoneId: _zoneId),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final width = MediaQuery.sizeOf(context).width;
+    return _DialogCard(
+      width: (width - 32).clamp(300, 460),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text('Livraison · ${_steps[_step]}', style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w800)),
+          const SizedBox(height: 4),
+          Text('Étape ${_step + 1} / ${_steps.length}', style: const TextStyle(color: PosColors.muted)),
+          const SizedBox(height: 12),
+          if (_step == 0) _field('Nom du client', _name, 'Nom', () => _editText(title: 'Client', initial: _name, hint: 'Nom du client', apply: (value) => _name = value)),
+          if (_step == 1) _field('Téléphone', _phone, '06…', () => _editText(title: 'Téléphone', initial: _phone, hint: 'Téléphone', phone: true, apply: (value) => _phone = value)),
+          if (_step == 2) ...[
+            _field('Adresse', _address, 'Adresse', () => _editText(title: 'Adresse', initial: _address, hint: 'Adresse de livraison', apply: (value) => _address = value)),
+            const SizedBox(height: 8),
+            _field('Notes', _notes, 'Optionnel', () => _editText(title: 'Notes', initial: _notes, hint: 'Notes', apply: (value) => _notes = value)),
+          ],
+          if (_step == 3) _zones(),
+          const SizedBox(height: 16),
+          Row(
+            children: [
+              if (_step > 0)
+                OutlinedButton(
+                  onPressed: () => setState(() => _step -= 1),
+                  child: const Text('Retour'),
+                ),
+              const Spacer(),
+              FilledButton(
+                onPressed: _stepReady ? _next : null,
+                style: FilledButton.styleFrom(backgroundColor: const Color(0xFF111827), minimumSize: const Size(120, 44)),
+                child: Text(_step == _steps.length - 1 ? 'Terminer' : 'Suivant'),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _field(String label, String value, String hint, VoidCallback onTap) {
+    return Material(
+      color: const Color(0xFFF8F9FB),
+      borderRadius: BorderRadius.circular(12),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(12),
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(label, style: const TextStyle(fontSize: 12, color: PosColors.muted, fontWeight: FontWeight.w700)),
+              const SizedBox(height: 2),
+              Text(
+                value.isEmpty ? hint : value,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(fontWeight: FontWeight.w700, color: value.isEmpty ? PosColors.muted : PosColors.ink),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _zones() {
+    if (widget.zones.isEmpty) {
+      return const Text('Aucune zone active.', style: TextStyle(color: PosColors.muted));
+    }
+    return Column(
+      children: [
+        for (final zone in widget.zones)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 6),
+            child: Material(
+              color: _zoneId == int.tryParse('${zone['id']}') ? const Color(0xFF111827) : const Color(0xFFF8F9FB),
+              borderRadius: BorderRadius.circular(12),
+              child: InkWell(
+                borderRadius: BorderRadius.circular(12),
+                onTap: () => setState(() => _zoneId = int.tryParse('${zone['id']}')),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          '${zone['name']}',
+                          style: TextStyle(
+                            fontWeight: FontWeight.w700,
+                            color: _zoneId == int.tryParse('${zone['id']}') ? Colors.white : PosColors.ink,
+                          ),
+                        ),
+                      ),
+                      Text(
+                        posMoney(double.tryParse('${zone['fee']}') ?? 0),
+                        style: TextStyle(
+                          fontWeight: FontWeight.w800,
+                          color: _zoneId == int.tryParse('${zone['id']}') ? Colors.white : PosColors.ink,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+      ],
+    );
+  }
 }

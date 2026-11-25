@@ -32,6 +32,7 @@ class _DeliveriesScreenState extends ConsumerState<DeliveriesScreen> {
   List<Map<String, dynamic>> _zones = [];
   String? _error;
   bool _busy = false;
+  String _filter = 'waiting';
 
   bool get _manage => widget.user.can('delivery.manage');
 
@@ -123,6 +124,80 @@ class _DeliveriesScreenState extends ConsumerState<DeliveriesScreen> {
     }
   }
 
+  bool _unassigned(Map<String, dynamic> delivery) {
+    final driver = delivery['driver_id'] ?? delivery['driver'];
+    return driver == null || '$driver'.isEmpty;
+  }
+
+  num _amount(Map<String, dynamic> delivery) {
+    final order = delivery['order'];
+    final raw = order is Map
+        ? (order['total'] ?? order['grand_total'] ?? order['amount_due'])
+        : (delivery['total'] ?? delivery['amount_due'] ?? delivery['cod_amount'] ?? delivery['fee']);
+    return num.tryParse('$raw'.replaceAll(',', '.')) ?? 0;
+  }
+
+  bool _settled(Map<String, dynamic> delivery) {
+    final status = '${delivery['payment_status'] ?? delivery['settlement_status'] ?? ''}';
+    return delivery['settled_at'] != null || delivery['driver_paid_at'] != null || delivery['is_paid'] == true || status == 'paid';
+  }
+
+  List<Map<String, dynamic>> get _visible {
+    final items = _items.where((delivery) {
+      final status = '${delivery['status']}';
+      switch (_filter) {
+        case 'waiting':
+          return _unassigned(delivery) && status != 'cancelled' && status != 'delivered';
+        case 'route':
+          return status == 'assigned' || status == 'picked_up' || status == 'out_for_delivery';
+        case 'done':
+          return status == 'delivered';
+        default:
+          return status != 'cancelled';
+      }
+    }).toList();
+    items.sort((a, b) {
+      final rankA = _unassigned(a) ? 0 : 1;
+      final rankB = _unassigned(b) ? 0 : 1;
+      return rankA.compareTo(rankB);
+    });
+    return items;
+  }
+
+  List<Widget> _driverTotals() {
+    final delivered = _items.where((delivery) => '${delivery['status']}' == 'delivered').toList();
+    final byDriver = <String, List<Map<String, dynamic>>>{};
+    for (final delivery in delivered) {
+      final driver = delivery['driver'];
+      final name = driver is Map ? '${driver['name'] ?? 'Livreur'}' : '${delivery['driver_name'] ?? 'Non assigné'}';
+      byDriver.putIfAbsent(name, () => []).add(delivery);
+    }
+    if (byDriver.isEmpty) return const [];
+    return [
+      const SizedBox(height: 8),
+      const Text('À encaisser des livreurs', style: TextStyle(fontWeight: FontWeight.w800)),
+      for (final entry in byDriver.entries)
+        ListTile(
+          dense: true,
+          title: Text(entry.key),
+          subtitle: Text('${entry.value.length} livrée(s) · ${entry.value.where((item) => !_settled(item)).length} à payer'),
+          trailing: Text(
+            posMoney(entry.value.where((item) => !_settled(item)).fold<num>(0, (sum, item) => sum + _amount(item)).toDouble()),
+            style: const TextStyle(fontWeight: FontWeight.w800),
+          ),
+        ),
+    ];
+  }
+
+  Widget _filterChip(String value, String label) {
+    final selected = _filter == value;
+    return ChoiceChip(
+      label: Text(label),
+      selected: selected,
+      onSelected: (_) => setState(() => _filter = value),
+    );
+  }
+
   Future<void> _call(String phone) async {
     final uri = Uri(scheme: 'tel', path: phone);
     await launchUrl(uri);
@@ -212,7 +287,18 @@ class _DeliveriesScreenState extends ConsumerState<DeliveriesScreen> {
               onTap: () => _editZone(zone),
             ),
         const Divider(),
-        for (final delivery in _items)
+        Wrap(
+          spacing: 6,
+          children: [
+            _filterChip('waiting', 'Non assignées'),
+            _filterChip('route', 'En route'),
+            _filterChip('done', 'Livrées'),
+            _filterChip('all', 'Toutes'),
+          ],
+        ),
+        if (_manage) ..._driverTotals(),
+        const SizedBox(height: 8),
+        for (final delivery in _visible)
           Card(
             child: Padding(
               padding: const EdgeInsets.all(12),

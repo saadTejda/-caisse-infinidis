@@ -24,6 +24,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
   final _password = TextEditingController();
   String? _error;
   bool _busy = false;
+  bool _hidden = true;
   String _host = '';
 
   @override
@@ -156,8 +157,15 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                     const SizedBox(height: 12),
                     TextField(
                       controller: _password,
-                      decoration: const InputDecoration(labelText: 'Mot de passe'),
-                      obscureText: true,
+                      decoration: InputDecoration(
+                        labelText: 'Mot de passe',
+                        suffixIcon: IconButton(
+                          tooltip: _hidden ? 'Afficher' : 'Masquer',
+                          onPressed: () => setState(() => _hidden = !_hidden),
+                          icon: Icon(_hidden ? Icons.visibility_outlined : Icons.visibility_off_outlined),
+                        ),
+                      ),
+                      obscureText: _hidden,
                       onSubmitted: (_) => _login(),
                     ),
                     if (_error != null) ...[

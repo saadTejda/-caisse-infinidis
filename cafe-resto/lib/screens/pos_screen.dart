@@ -225,6 +225,25 @@ class _PosScreenState extends ConsumerState<PosScreen> {
 
   double get _total => _cart.fold(0, (sum, line) => sum + line.lineTotal);
 
+  double get _zoneFee {
+    if (_orderType != 'delivery' || _zoneId == null) return 0;
+    for (final zone in _zones) {
+      if (int.tryParse('${zone['id']}') == _zoneId) {
+        return double.tryParse('${zone['fee']}'.replaceAll(',', '.')) ?? 0;
+      }
+    }
+    return 0;
+  }
+
+  double get _payable => _total + _zoneFee;
+
+  String get _zoneName {
+    for (final zone in _zones) {
+      if (int.tryParse('${zone['id']}') == _zoneId) return '${zone['name']}';
+    }
+    return '';
+  }
+
   int get _articleCount => _cart.fold<int>(0, (sum, line) => sum + (line.measured ? 1 : line.quantity.round()));
 
   bool get _deliveryReady {
@@ -338,6 +357,7 @@ class _PosScreenState extends ConsumerState<PosScreen> {
     final choice = await showPosPayDialog(
       context,
       total: _total,
+      deliveryFee: _zoneFee,
       initialMethod: _salesBlocked ? 'card' : _payment,
       cashBlocked: _salesBlocked,
     );
@@ -365,8 +385,8 @@ class _PosScreenState extends ConsumerState<PosScreen> {
 
     final tendered = _payment == 'cash'
         ? double.tryParse(_tendered.text.replaceAll(',', '.'))
-        : _total;
-    if (_payment == 'cash' && (tendered == null || tendered < _total)) {
+        : _payable;
+    if (_payment == 'cash' && (tendered == null || tendered + 0.001 < _payable)) {
       setState(() => _error = 'Montant reçu insuffisant.');
       return;
     }
@@ -836,26 +856,21 @@ class _PosScreenState extends ConsumerState<PosScreen> {
                   children: [
                     const Text('Total à payer', style: TextStyle(color: PosColors.muted, fontWeight: FontWeight.w600)),
                     const Spacer(),
-                    Text(_money(_total), style: const TextStyle(fontSize: 26, fontWeight: FontWeight.w800)),
+                    Text(_money(_payable), style: const TextStyle(fontSize: 26, fontWeight: FontWeight.w800)),
                   ],
                 ),
+                if (_orderType == 'delivery' && _zoneFee > 0)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 2),
+                    child: Text(
+                      'Dont livraison ${_money(_zoneFee)}',
+                      textAlign: TextAlign.end,
+                      style: const TextStyle(color: PosColors.muted, fontSize: 12),
+                    ),
+                  ),
                 if (_orderType == 'delivery') ...[
                   const SizedBox(height: 8),
-                  _padLine('Client', _customerName, 'Nom du client'),
-                  _padLine('Téléphone', _customerPhone, 'Téléphone', phone: true),
-                  _padLine('Adresse', _deliveryAddress, 'Adresse de livraison'),
-                  _padLine('Notes', _deliveryNotes, 'Notes de livraison'),
-                  if (_zones.isNotEmpty)
-                    DropdownButton<int?>(
-                      value: _zoneId,
-                      isExpanded: true,
-                      hint: const Text('Zone'),
-                      items: [
-                        for (final zone in _zones)
-                          DropdownMenuItem(value: int.tryParse('${zone['id']}'), child: Text('${zone['name']} · ${zone['fee']}')),
-                      ],
-                      onChanged: (value) => setState(() => _zoneId = value),
-                    ),
+                  _deliveryCard(),
                 ],
                 const SizedBox(height: 10),
                 Material(
@@ -930,9 +945,12 @@ class _PosScreenState extends ConsumerState<PosScreen> {
         borderRadius: BorderRadius.circular(999),
         child: InkWell(
           borderRadius: BorderRadius.circular(999),
-          onTap: () {
+          onTap: () async {
             setState(() => _orderType = value);
-            if (value == 'delivery' && _zones.isEmpty) _loadZones();
+            if (value != 'delivery') return;
+            if (_zones.isEmpty) await _loadZones();
+            if (!mounted) return;
+            await _editDelivery();
           },
           child: Padding(
             padding: const EdgeInsets.symmetric(vertical: 10),
@@ -951,18 +969,61 @@ class _PosScreenState extends ConsumerState<PosScreen> {
     );
   }
 
-  Widget _padLine(String title, TextEditingController controller, String hint, {bool phone = false}) {
+  Future<void> _editDelivery() async {
+    final draft = await showDeliveryWizard(
+      context,
+      name: _customerName.text,
+      phone: _customerPhone.text,
+      address: _deliveryAddress.text,
+      notes: _deliveryNotes.text,
+      zones: _zones,
+      zoneId: _zoneId,
+      requirePhone: _settingOn('delivery.require_phone'),
+      requireZone: _settingOn('delivery.require_zone') || _zones.isNotEmpty,
+    );
+    if (draft == null) return;
+    setState(() {
+      _customerName.text = draft.name;
+      _customerPhone.text = draft.phone;
+      _deliveryAddress.text = draft.address;
+      _deliveryNotes.text = draft.notes;
+      _zoneId = draft.zoneId;
+    });
+  }
+
+  Widget _deliveryCard() {
+    final ready = _customerName.text.trim().isNotEmpty;
+    final zone = _zoneName.isEmpty ? 'Zone' : '$_zoneName · ${_money(_zoneFee)}';
+    final detail = ready
+        ? '${_customerName.text.trim()}${_customerPhone.text.trim().isEmpty ? '' : ' · ${_customerPhone.text.trim()}'}'
+        : 'Nom, téléphone, adresse';
     return Padding(
       padding: const EdgeInsets.only(bottom: 6),
-      child: InkWell(
-        onTap: () async {
-          final value = await showPosTextPad(context, title: title, initial: controller.text, hint: hint, phone: phone);
-          if (value == null) return;
-          setState(() => controller.text = value);
-        },
-        child: InputDecorator(
-          decoration: InputDecoration(labelText: title, isDense: true),
-          child: Text(controller.text.isEmpty ? hint : controller.text),
+      child: Material(
+        color: Colors.white,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(12),
+          side: const BorderSide(color: PosColors.line),
+        ),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(12),
+          onTap: _editDelivery,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('Livraison', style: TextStyle(fontSize: 12, color: PosColors.muted, fontWeight: FontWeight.w700)),
+                Text(detail, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w700)),
+                Text(
+                  _deliveryAddress.text.trim().isEmpty ? zone : '${_deliveryAddress.text.trim()} · $zone',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(color: PosColors.muted, fontSize: 12),
+                ),
+              ],
+            ),
+          ),
         ),
       ),
     );
