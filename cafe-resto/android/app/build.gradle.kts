@@ -34,8 +34,8 @@ android {
     }
 
     signingConfigs {
-        // v1 est nécessaire : le gestionnaire de fichiers des tablettes Lenovo
-        // ferme le popup d’installation si l’APK n’a que la signature v2.
+        // v1 est nécessaire sur les tablettes Lenovo. AGP l’enlève quand minSdk
+        // est 24 : le workflow la réajoute avec apksigner après la construction.
         getByName("debug") {
             enableV1Signing = true
             enableV2Signing = true

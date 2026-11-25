@@ -68,6 +68,36 @@ jobs:
           mv "$out/app-armeabi-v7a-release.apk" "cafe-resto-caisse-${n}-ancien-32bits.apk"
           ls -lh cafe-resto-caisse-*.apk
 
+      - name: Signature v1 pour la tablette Lenovo
+        env:
+          CAISSE_RESTO_KEYSTORE_PASSWORD: ${{ secrets.CAISSE_KEYSTORE_PASSWORD }}
+          CAISSE_RESTO_KEY_ALIAS: caisse
+        run: |
+          set -euo pipefail
+          if [ -z "${CAISSE_RESTO_KEYSTORE_FILE:-}" ]; then
+            echo "::warning title=Signature::pas de clé, signature v1 non ajoutée"
+            exit 0
+          fi
+          SDK="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}"
+          APKSIGNER=$(find "$SDK/build-tools" -type f -name apksigner | sort | tail -n 1)
+          test -n "$APKSIGNER"
+          # AGP et apksigner omettent la signature JAR dès que minSdk est 24.
+          # Le gestionnaire de fichiers Lenovo ferme alors l’installation sans message.
+          for apk in cafe-resto-caisse-*.apk; do
+            "$APKSIGNER" sign \
+              --ks "$CAISSE_RESTO_KEYSTORE_FILE" \
+              --ks-type PKCS12 \
+              --ks-key-alias "$CAISSE_RESTO_KEY_ALIAS" \
+              --ks-pass env:CAISSE_RESTO_KEYSTORE_PASSWORD \
+              --key-pass env:CAISSE_RESTO_KEYSTORE_PASSWORD \
+              --min-sdk-version 21 \
+              --v1-signing-enabled true \
+              --v2-signing-enabled true \
+              --v3-signing-enabled true \
+              "$apk"
+            "$APKSIGNER" verify --verbose --min-sdk-version 21 "$apk" | grep -q "v1 scheme (JAR signing): true"
+          done
+
       - uses: actions/upload-artifact@v4
         with:
           name: cafe-resto-caisse-apk
@@ -81,6 +111,7 @@ jobs:
           name: Café Resto Caisse 1.0.${{ github.run_number }}
           body: |
             Paquet Android : com.caferesto.cafe_resto_caisse.
+            Signature v1 + v2 + v3, pour le gestionnaire de fichiers des tablettes Lenovo.
             Il peut rester installé à côté de la caisse INFINIDIS.
 
             Sur la tablette Lenovo, prenez le fichier « tablette-64bits ».
