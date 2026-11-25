@@ -81,8 +81,8 @@ jobs:
           SDK="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}"
           APKSIGNER=$(find "$SDK/build-tools" -type f -name apksigner | sort | tail -n 1)
           test -n "$APKSIGNER"
-          # AGP et apksigner omettent la signature JAR dès que minSdk est 24.
-          # Le gestionnaire de fichiers Lenovo ferme alors l’installation sans message.
+          # Android 11 exige la signature v2. Le gestionnaire Lenovo exige en plus
+          # une signature JAR en SHA-1, et ferme la fenêtre si la signature v3 est présente.
           for apk in cafe-resto-caisse-*.apk; do
             "$APKSIGNER" sign \
               --ks "$CAISSE_RESTO_KEYSTORE_FILE" \
@@ -90,12 +90,15 @@ jobs:
               --ks-key-alias "$CAISSE_RESTO_KEY_ALIAS" \
               --ks-pass env:CAISSE_RESTO_KEYSTORE_PASSWORD \
               --key-pass env:CAISSE_RESTO_KEYSTORE_PASSWORD \
-              --min-sdk-version 21 \
+              --min-sdk-version 1 \
               --v1-signing-enabled true \
               --v2-signing-enabled true \
-              --v3-signing-enabled true \
+              --v3-signing-enabled false \
+              --v4-signing-enabled false \
               "$apk"
-            "$APKSIGNER" verify --verbose --min-sdk-version 21 "$apk" | grep -q "v1 scheme (JAR signing): true"
+            "$APKSIGNER" verify --verbose --min-sdk-version 1 "$apk" | grep -q "v1 scheme (JAR signing): true"
+            "$APKSIGNER" verify --verbose --min-sdk-version 30 "$apk" | grep -q "v2 scheme (APK Signature Scheme v2): true"
+            unzip -p "$apk" META-INF/MANIFEST.MF | grep -q "SHA1-Digest:"
           done
 
       - uses: actions/upload-artifact@v4
@@ -111,7 +114,7 @@ jobs:
           name: Café Resto Caisse 1.0.${{ github.run_number }}
           body: |
             Paquet Android : com.caferesto.cafe_resto_caisse.
-            Signature v1 + v2 + v3, pour le gestionnaire de fichiers des tablettes Lenovo.
+            Android 11 : signature JAR SHA-1 et signature v2. Cible Android 11.
             Il peut rester installé à côté de la caisse INFINIDIS.
 
             Sur la tablette Lenovo, prenez le fichier « tablette-64bits ».
