@@ -1020,11 +1020,41 @@ class _DeliveryWizardState extends State<_DeliveryWizard> {
   late String _name = widget.name;
   late String _phone = widget.phone;
   late String _address = widget.address;
-  late String _notes = widget.notes;
+  late final String _notes = widget.notes;
   late int? _zoneId = widget.zoneId;
   int _step = 0;
+  bool _shift = false;
 
   static const _steps = ['Client', 'Téléphone', 'Adresse', 'Zone'];
+  static const _letters = [
+    ['a', 'z', 'e', 'r', 't', 'y', 'u', 'i', 'o', 'p'],
+    ['q', 's', 'd', 'f', 'g', 'h', 'j', 'k', 'l', 'm'],
+    ['w', 'x', 'c', 'v', 'b', 'n'],
+  ];
+
+  String get _current {
+    switch (_step) {
+      case 0:
+        return _name;
+      case 1:
+        return _phone;
+      case 2:
+        return _address;
+      default:
+        return '';
+    }
+  }
+
+  set _current(String value) {
+    switch (_step) {
+      case 0:
+        _name = value;
+      case 1:
+        _phone = value;
+      case 2:
+        _address = value;
+    }
+  }
 
   bool get _stepReady {
     switch (_step) {
@@ -1039,16 +1069,34 @@ class _DeliveryWizardState extends State<_DeliveryWizard> {
     }
   }
 
-  Future<void> _editText({required String title, required String initial, required String hint, required ValueChanged<String> apply, bool phone = false}) async {
-    final value = await showPosTextPad(context, title: title, initial: initial, hint: hint, phone: phone);
-    if (value == null) return;
-    setState(() => apply(value));
+  void _type(String key) {
+    if (key == 'back') {
+      if (_current.isEmpty) return;
+      setState(() => _current = _current.substring(0, _current.length - 1));
+      return;
+    }
+    if (key == 'space') {
+      setState(() => _current = '$_current ');
+      return;
+    }
+    if (key == 'shift') {
+      setState(() => _shift = !_shift);
+      return;
+    }
+    final char = _shift ? key.toUpperCase() : key;
+    setState(() {
+      _current = '$_current$char';
+      if (_shift) _shift = false;
+    });
   }
 
   void _next() {
     if (!_stepReady) return;
     if (_step < _steps.length - 1) {
-      setState(() => _step += 1);
+      setState(() {
+        _step += 1;
+        _shift = false;
+      });
       return;
     }
     Navigator.of(context).pop(
@@ -1060,7 +1108,7 @@ class _DeliveryWizardState extends State<_DeliveryWizard> {
   Widget build(BuildContext context) {
     final width = MediaQuery.sizeOf(context).width;
     return _DialogCard(
-      width: (width - 32).clamp(300, 460),
+      width: (width - 24).clamp(300, _step == 1 ? 420 : 640),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         mainAxisSize: MainAxisSize.min,
@@ -1068,16 +1116,28 @@ class _DeliveryWizardState extends State<_DeliveryWizard> {
           Text('Livraison · ${_steps[_step]}', style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w800)),
           const SizedBox(height: 4),
           Text('Étape ${_step + 1} / ${_steps.length}', style: const TextStyle(color: PosColors.muted)),
+          const SizedBox(height: 10),
+          Container(
+            constraints: const BoxConstraints(minHeight: 44),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            decoration: BoxDecoration(
+              color: const Color(0xFFF8F9FB),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: PosColors.line),
+            ),
+            child: Text(
+              _step == 3 ? (_zoneId == null ? 'Choisir la zone' : 'Zone choisie') : (_current.isEmpty ? _steps[_step] : _current),
+              style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800, color: _current.isEmpty && _step != 3 ? PosColors.muted : PosColors.ink),
+            ),
+          ),
+          const SizedBox(height: 10),
+          if (_step == 1)
+            _keypad(keys: const ['1', '2', '3', '4', '5', '6', '7', '8', '9', '+', '0', 'back'], onKey: _type, aspect: 3.2, keyHeight: 36)
+          else if (_step == 3)
+            _zones()
+          else
+            _lettersPad(),
           const SizedBox(height: 12),
-          if (_step == 0) _field('Nom du client', _name, 'Nom', () => _editText(title: 'Client', initial: _name, hint: 'Nom du client', apply: (value) => _name = value)),
-          if (_step == 1) _field('Téléphone', _phone, '06…', () => _editText(title: 'Téléphone', initial: _phone, hint: 'Téléphone', phone: true, apply: (value) => _phone = value)),
-          if (_step == 2) ...[
-            _field('Adresse', _address, 'Adresse', () => _editText(title: 'Adresse', initial: _address, hint: 'Adresse de livraison', apply: (value) => _address = value)),
-            const SizedBox(height: 8),
-            _field('Notes', _notes, 'Optionnel', () => _editText(title: 'Notes', initial: _notes, hint: 'Notes', apply: (value) => _notes = value)),
-          ],
-          if (_step == 3) _zones(),
-          const SizedBox(height: 16),
           Row(
             children: [
               if (_step > 0)
@@ -1098,30 +1158,34 @@ class _DeliveryWizardState extends State<_DeliveryWizard> {
     );
   }
 
-  Widget _field(String label, String value, String hint, VoidCallback onTap) {
-    return Material(
-      color: const Color(0xFFF8F9FB),
-      borderRadius: BorderRadius.circular(12),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(12),
-        onTap: onTap,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(label, style: const TextStyle(fontSize: 12, color: PosColors.muted, fontWeight: FontWeight.w700)),
-              const SizedBox(height: 2),
-              Text(
-                value.isEmpty ? hint : value,
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(fontWeight: FontWeight.w700, color: value.isEmpty ? PosColors.muted : PosColors.ink),
-              ),
-            ],
-          ),
+  Widget _lettersPad() {
+    return Column(
+      children: [
+        for (final row in _letters) ...[
+          _letterRow(row),
+          const SizedBox(height: 6),
+        ],
+        Row(
+          children: [
+            Expanded(flex: 2, child: _keyButton('Maj', onTap: () => _type('shift'), active: _shift, height: 40)),
+            const SizedBox(width: 6),
+            Expanded(flex: 5, child: _keyButton('Espace', onTap: () => _type('space'), height: 40)),
+            const SizedBox(width: 6),
+            Expanded(flex: 2, child: _keyButton('⌫', onTap: () => _type('back'), height: 40)),
+          ],
         ),
-      ),
+      ],
+    );
+  }
+
+  Widget _letterRow(List<String> keys) {
+    return Row(
+      children: [
+        for (final key in keys) ...[
+          if (key != keys.first) const SizedBox(width: 4),
+          Expanded(child: _keyButton(_shift ? key.toUpperCase() : key, onTap: () => _type(key), height: 40)),
+        ],
+      ],
     );
   }
 

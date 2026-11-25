@@ -947,10 +947,7 @@ class _PosScreenState extends ConsumerState<PosScreen> {
           borderRadius: BorderRadius.circular(999),
           onTap: () async {
             setState(() => _orderType = value);
-            if (value != 'delivery') return;
-            if (_zones.isEmpty) await _loadZones();
-            if (!mounted) return;
-            await _editDelivery();
+            if (value == 'delivery' && _zones.isEmpty) await _loadZones();
           },
           child: Padding(
             padding: const EdgeInsets.symmetric(vertical: 10),
@@ -970,6 +967,8 @@ class _PosScreenState extends ConsumerState<PosScreen> {
   }
 
   Future<void> _editDelivery() async {
+    if (_zones.isEmpty) await _loadZones();
+    if (!mounted) return;
     final draft = await showDeliveryWizard(
       context,
       name: _customerName.text,
