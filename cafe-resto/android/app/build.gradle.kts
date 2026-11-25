@@ -19,11 +19,10 @@ android {
     }
 
     defaultConfig {
-        // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
-        applicationId = "com.caferesto.cafe_resto_caisse"
-        // You can update the following values to match your application needs.
-        // For more information, see: https://flutter.dev/to/review-gradle-config.
-        minSdk = flutter.minSdkVersion
+        // Identifiant neuf. L’ancien paquet est déjà enregistré sans icône
+        // par le lanceur Lenovo, et il ne faut pas recouvrir la caisse ni la préparation.
+        applicationId = "com.infinidis.cafe_resto"
+        minSdk = 23
         // La tablette Lenovo est sous Android 11. Une cible plus récente
         // fait fermer son installateur sans message.
         targetSdk = 30

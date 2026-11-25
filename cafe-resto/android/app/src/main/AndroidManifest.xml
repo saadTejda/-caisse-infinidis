@@ -14,7 +14,7 @@
     <uses-permission android:name="android.permission.BLUETOOTH_SCAN"/>
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"/>
     <application
-        android:label="Café Resto Caisse"
+        android:label="Caisse Resto"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher"

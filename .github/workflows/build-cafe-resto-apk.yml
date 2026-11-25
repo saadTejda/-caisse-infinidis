@@ -113,9 +113,10 @@ jobs:
           tag_name: cafe-resto-v1.0.${{ github.run_number }}
           name: Café Resto Caisse 1.0.${{ github.run_number }}
           body: |
-            Paquet Android : com.caferesto.cafe_resto_caisse.
+            Nom dans le menu : Caisse Resto.
+            Paquet Android : com.infinidis.cafe_resto.
             Android 11 : signature JAR SHA-1 et signature v2. Cible Android 11.
-            Il peut rester installé à côté de la caisse INFINIDIS.
+            Nouvelle application, à côté de la caisse et de la préparation.
 
             Sur la tablette Lenovo, prenez le fichier « tablette-64bits ».
             Le fichier « ancien-32bits » est pour les très anciens appareils.
