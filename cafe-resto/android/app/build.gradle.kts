@@ -10,9 +10,7 @@ val hasReleaseKey = !restoKeystore.isNullOrBlank()
 
 android {
     namespace = "com.caferesto.cafe_resto_caisse"
-    // Android 14, comme la caisse qui s’installe sur cette tablette.
-    // Le compileSdk 36 fait planter le programme d’installation d’Android 11.
-    compileSdk = 34
+    compileSdk = flutter.compileSdkVersion
     ndkVersion = flutter.ndkVersion
 
     compileOptions {

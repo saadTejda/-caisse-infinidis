@@ -68,6 +68,18 @@ jobs:
           mv "$out/app-armeabi-v7a-release.apk" "cafe-resto-caisse-${n}-ancien-32bits.apk"
           ls -lh cafe-resto-caisse-*.apk
 
+      - name: Manifeste Android 14
+        run: |
+          set -euo pipefail
+          python3 tool/android11_manifest.py cafe-resto-caisse-*.apk
+          SDK="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}"
+          ZIPALIGN=$(find "$SDK/build-tools" -type f -name zipalign | sort | tail -n 1)
+          test -n "$ZIPALIGN"
+          for apk in cafe-resto-caisse-*.apk; do
+            "$ZIPALIGN" -f 4 "$apk" "$apk.aligned"
+            mv "$apk.aligned" "$apk"
+          done
+
       - name: Signature v1 pour la tablette Lenovo
         env:
           CAISSE_RESTO_KEYSTORE_PASSWORD: ${{ secrets.CAISSE_KEYSTORE_PASSWORD }}
