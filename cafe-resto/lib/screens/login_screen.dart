@@ -8,6 +8,8 @@ import '../auth/staff_user.dart';
 import '../l10n/caisse_text.dart';
 import '../providers/app_providers.dart';
 import '../theme/pos_theme.dart';
+import '../widgets/developer_signature.dart';
+import 'host_screen.dart';
 import 'pos_shell.dart';
 
 class LoginScreen extends ConsumerStatefulWidget {
@@ -22,6 +24,24 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
   final _password = TextEditingController();
   String? _error;
   bool _busy = false;
+  String _host = '';
+
+  @override
+  void initState() {
+    super.initState();
+    _loadHost();
+  }
+
+  Future<void> _loadHost() async {
+    final host = await ref.read(sessionStoreProvider).getHost();
+    if (mounted) setState(() => _host = host ?? '');
+  }
+
+  void _openHost() {
+    Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => const HostScreen(changing: true)),
+    ).then((_) => _loadHost());
+  }
 
   Future<void> _login() async {
     setState(() {
@@ -83,20 +103,36 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop) _openHost();
+      },
+      child: Scaffold(
       backgroundColor: PosColors.sidebar,
       body: SafeArea(
         child: Center(
-          child: ConstrainedBox(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.all(24),
+            child: ConstrainedBox(
             constraints: const BoxConstraints(maxWidth: 420),
             child: Card(
-              margin: const EdgeInsets.all(24),
               child: Padding(
                 padding: const EdgeInsets.all(24),
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
+                    Align(
+                      alignment: AlignmentDirectional.centerStart,
+                      child: TextButton.icon(
+                        onPressed: _openHost,
+                        icon: const Icon(Icons.arrow_back),
+                        label: const Text('Adresse du serveur'),
+                      ),
+                    ),
+                    const Icon(Icons.point_of_sale, size: 48, color: PosColors.accent),
+                    const SizedBox(height: 8),
                     Text(
                       'Connexion',
                       textAlign: TextAlign.center,
@@ -133,13 +169,24 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                       onPressed: _busy ? null : _login,
                       child: Text(_busy ? '…' : 'Entrer'),
                     ),
+                    if (_host.isNotEmpty) ...[
+                      const SizedBox(height: 8),
+                      Text(
+                        _host,
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(color: PosColors.muted, fontSize: 12),
+                      ),
+                    ],
+                    const DeveloperSignature(),
                   ],
                 ),
               ),
             ),
           ),
+          ),
         ),
       ),
+    ),
     );
   }
 }

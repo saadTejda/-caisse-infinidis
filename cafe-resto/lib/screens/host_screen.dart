@@ -4,10 +4,14 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../api/api_client.dart';
 import '../theme/pos_theme.dart';
+import '../widgets/developer_signature.dart';
 import 'login_screen.dart';
 
 class HostScreen extends ConsumerStatefulWidget {
-  const HostScreen({super.key});
+  const HostScreen({super.key, this.changing = false});
+
+  /// Ouvert depuis la connexion : le retour revient à cette page.
+  final bool changing;
 
   @override
   ConsumerState<HostScreen> createState() => _HostScreenState();
@@ -60,6 +64,10 @@ class _HostScreenState extends ConsumerState<HostScreen> {
       }
 
       if (!mounted) return;
+      if (widget.changing) {
+        Navigator.of(context).pop();
+        return;
+      }
       await Navigator.of(context).pushReplacement(
         MaterialPageRoute(builder: (_) => const LoginScreen()),
       );
@@ -74,18 +82,30 @@ class _HostScreenState extends ConsumerState<HostScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: PosColors.sidebar,
+      appBar: widget.changing
+          ? AppBar(
+              title: const Text('Adresse du serveur'),
+              leading: IconButton(
+                icon: const Icon(Icons.arrow_back),
+                onPressed: () => Navigator.of(context).pop(),
+              ),
+            )
+          : null,
       body: SafeArea(
         child: Center(
-          child: ConstrainedBox(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.all(24),
+            child: ConstrainedBox(
             constraints: const BoxConstraints(maxWidth: 420),
             child: Card(
-              margin: const EdgeInsets.all(24),
               child: Padding(
                 padding: const EdgeInsets.all(24),
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
+                    const Icon(Icons.dns_outlined, size: 48, color: PosColors.accent),
+                    const SizedBox(height: 8),
                     Text(
                       'Café Resto',
                       textAlign: TextAlign.center,
@@ -119,10 +139,12 @@ class _HostScreenState extends ConsumerState<HostScreen> {
                       onPressed: _busy ? null : _continue,
                       child: Text(_busy ? 'Test…' : 'Continuer'),
                     ),
+                    const DeveloperSignature(),
                   ],
                 ),
               ),
             ),
+          ),
           ),
         ),
       ),
