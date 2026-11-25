@@ -192,6 +192,14 @@ class _CashScreenState extends ConsumerState<CashScreen> {
     }
   }
 
+  String _cash(dynamic value) {
+    if (value == null || '$value'.isEmpty) return '—';
+    final number = double.tryParse('$value'.replaceAll(',', '.'));
+    if (number == null) return '$value';
+    final parts = number.toStringAsFixed(2).split('.');
+    return '${parts[0]},${parts[1]}';
+  }
+
   @override
   Widget build(BuildContext context) {
     final data = _session ?? {};
@@ -200,102 +208,211 @@ class _CashScreenState extends ConsumerState<CashScreen> {
     final totals = data['totals'] is Map ? Map<String, dynamic>.from(data['totals'] as Map) : const <String, dynamic>{};
 
     return ListView(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.fromLTRB(12, 10, 12, 16),
       children: [
-        Text(
-          isOpen ? 'Session ouverte' : 'Aucune caisse ouverte',
-          style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w800),
-        ),
-        const SizedBox(height: 8),
-        const Text(
-          'L’ouverture et la fermeture nécessitent le réseau.',
-          style: TextStyle(color: PosColors.muted),
-        ),
-        if (_error != null) ...[
-          const SizedBox(height: 8),
-          Text(_error!, style: const TextStyle(color: PosColors.danger)),
-        ],
-        const SizedBox(height: 16),
-        if (!isOpen) ...[
-          _padField(_opening, 'Fond de caisse', () => _editAmount(_opening, 'Fond de caisse')),
-          const SizedBox(height: 8),
-          _padField(_openingNote, 'Note', () => _editText(_openingNote, 'Note d’ouverture')),
-          const SizedBox(height: 12),
-          ElevatedButton(
-            onPressed: _busy ? null : _open,
-            child: const Text('Ouvrir le tiroir'),
-          ),
-        ] else ...[
-          const Text('La carte ne rentre pas dans le tiroir.', style: TextStyle(color: PosColors.muted)),
-          const SizedBox(height: 8),
-          Card(
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text('Session ${data['id'] ?? '—'}', style: const TextStyle(fontWeight: FontWeight.w800)),
-                  Text('Espèces attendues ${totals['expected'] ?? data['closing_expected'] ?? '—'}'),
-                  Text('Ventes espèces ${totals['cash_sales'] ?? '—'}'),
-                  Text('Entrées ${totals['cash_in'] ?? '—'}'),
-                  Text('Sorties ${totals['cash_out'] ?? '—'}'),
-                  Text('Dépenses ${totals['expenses'] ?? '—'}'),
-                  if (data['closing_counted'] != null) Text('Compté ${data['closing_counted']}'),
-                  if (data['variance'] != null) Text('Écart ${data['variance']}'),
-                ],
+        Row(
+          children: [
+            Expanded(
+              child: Text(
+                isOpen ? 'Session ouverte' : 'Aucune caisse ouverte',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w800),
               ),
             ),
+            IconButton(
+              visualDensity: VisualDensity.compact,
+              tooltip: 'Actualiser',
+              onPressed: _busy ? null : _load,
+              icon: const Icon(Icons.refresh, size: 20),
+            ),
+          ],
+        ),
+        if (isOpen) ...[
+          Text(
+            'Session ${data['id'] ?? '—'}',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(color: PosColors.muted, fontSize: 12),
           ),
-          const SizedBox(height: 12),
+          const Text(
+            'La carte ne rentre pas dans le tiroir.',
+            style: TextStyle(color: PosColors.muted, fontSize: 12),
+          ),
+        ]
+        else
+          const Text(
+            'L’ouverture et la fermeture nécessitent le réseau.',
+            style: TextStyle(color: PosColors.muted, fontSize: 12),
+          ),
+        if (_error != null) ...[
+          const SizedBox(height: 6),
+          Text(_error!, style: const TextStyle(color: PosColors.danger, fontSize: 13)),
+        ],
+        const SizedBox(height: 10),
+        if (!isOpen) ...[
           Row(
             children: [
-              ChoiceChip(
-                label: const Text('Entrée'),
-                selected: _movementType == 'cash_in',
-                onSelected: (_) => setState(() => _movementType = 'cash_in'),
-              ),
+              Expanded(child: _padField(_opening, 'Fond de caisse', () => _editAmount(_opening, 'Fond de caisse'))),
               const SizedBox(width: 8),
-              ChoiceChip(
-                label: const Text('Sortie'),
-                selected: _movementType == 'cash_out',
-                onSelected: (_) => setState(() => _movementType = 'cash_out'),
-              ),
-              const SizedBox(width: 8),
-              ChoiceChip(
-                label: const Text('Dépense'),
-                selected: _movementType == 'expense',
-                onSelected: (_) => setState(() => _movementType = 'expense'),
-              ),
+              Expanded(child: _padField(_openingNote, 'Note', () => _editText(_openingNote, 'Note d’ouverture'))),
             ],
           ),
           const SizedBox(height: 8),
-          _padField(_movementAmount, 'Montant', () => _editAmount(_movementAmount, 'Montant')),
-          const SizedBox(height: 8),
-          _padField(_movementReason, 'Motif', () => _editText(_movementReason, 'Motif')),
-          const SizedBox(height: 8),
-          ElevatedButton(onPressed: _busy ? null : _move, child: const Text('Enregistrer mouvement')),
-          const Divider(height: 32),
-          _padField(_counted, 'Espèces comptées', () => _editAmount(_counted, 'Espèces comptées')),
-          const SizedBox(height: 8),
-          _padField(_closingNote, 'Note de fermeture', () => _editText(_closingNote, 'Note de fermeture')),
-          const SizedBox(height: 8),
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(backgroundColor: PosColors.danger),
-            onPressed: _busy ? null : _close,
-            child: const Text('Fermer le tiroir'),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: _action('Ouvrir le tiroir', _open),
+          ),
+        ] else ...[
+          _totalsGrid(data, totals),
+          const SizedBox(height: 12),
+          const Text('Mouvement', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 13)),
+          const SizedBox(height: 6),
+          Row(
+            children: [
+              _segment('Entrée', 'cash_in'),
+              const SizedBox(width: 6),
+              _segment('Sortie', 'cash_out'),
+              const SizedBox(width: 6),
+              _segment('Dépense', 'expense'),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              Expanded(flex: 2, child: _padField(_movementAmount, 'Montant', () => _editAmount(_movementAmount, 'Montant'))),
+              const SizedBox(width: 8),
+              Expanded(flex: 3, child: _padField(_movementReason, 'Motif', () => _editText(_movementReason, 'Motif'))),
+              const SizedBox(width: 8),
+              _action('Enregistrer', _move),
+            ],
+          ),
+          const SizedBox(height: 14),
+          const Text('Fermeture', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 13)),
+          const SizedBox(height: 6),
+          Row(
+            children: [
+              Expanded(flex: 2, child: _padField(_counted, 'Espèces comptées', () => _editAmount(_counted, 'Espèces comptées'))),
+              const SizedBox(width: 8),
+              Expanded(flex: 3, child: _padField(_closingNote, 'Note de fermeture', () => _editText(_closingNote, 'Note de fermeture'))),
+              const SizedBox(width: 8),
+              _action('Fermer', _close, danger: true),
+            ],
           ),
         ],
-        const SizedBox(height: 12),
-        TextButton(onPressed: _busy ? null : _load, child: const Text('Actualiser')),
-        const SizedBox(height: 8),
-        const Text('Historique', style: TextStyle(fontWeight: FontWeight.w800)),
+        const SizedBox(height: 16),
+        const Text('Historique', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 13)),
+        const SizedBox(height: 4),
         for (final session in _history.take(12))
-          ListTile(
-            dense: true,
-            title: Text('${session['opened_at'] ?? session['id']} · ${session['status']}'),
-            subtitle: Text('Attendu ${session['totals'] is Map ? (session['totals'] as Map)['expected'] : session['closing_expected'] ?? '—'} · écart ${session['variance'] ?? '—'}'),
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 4),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    '${session['opened_at'] ?? session['id']}',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontSize: 13),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Text('${session['status']}', style: const TextStyle(fontSize: 12, color: PosColors.muted)),
+                const SizedBox(width: 12),
+                SizedBox(
+                  width: 88,
+                  child: Text(
+                    _cash(session['totals'] is Map ? (session['totals'] as Map)['expected'] : session['closing_expected']),
+                    textAlign: TextAlign.end,
+                    style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
+                  ),
+                ),
+              ],
+            ),
           ),
       ],
+    );
+  }
+
+  Widget _totalsGrid(Map<String, dynamic> data, Map<String, dynamic> totals) {
+    final cells = <(String, String)>[
+      ('Espèces attendues', _cash(totals['expected'] ?? data['closing_expected'])),
+      ('Ventes espèces', _cash(totals['cash_sales'])),
+      ('Entrées', _cash(totals['cash_in'])),
+      ('Sorties', _cash(totals['cash_out'])),
+      ('Dépenses', _cash(totals['expenses'])),
+      if (data['variance'] != null) ('Écart', _cash(data['variance'])),
+    ];
+    return GridView.count(
+      crossAxisCount: 3,
+      shrinkWrap: true,
+      physics: const NeverScrollableScrollPhysics(),
+      mainAxisSpacing: 8,
+      crossAxisSpacing: 8,
+      childAspectRatio: 2.4,
+      children: [
+        for (final cell in cells) _stat(cell.$1, cell.$2),
+      ],
+    );
+  }
+
+  Widget _stat(String label, String value) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: PosColors.line),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Text(label, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 11, color: PosColors.muted, fontWeight: FontWeight.w700)),
+          const SizedBox(height: 2),
+          Text(value, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w800)),
+        ],
+      ),
+    );
+  }
+
+  Widget _segment(String label, String value) {
+    final selected = _movementType == value;
+    return Expanded(
+      child: Material(
+        color: selected ? const Color(0xFF111827) : Colors.white,
+        borderRadius: BorderRadius.circular(8),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(8),
+          onTap: () => setState(() => _movementType = value),
+          child: Container(
+            height: 32,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: selected ? const Color(0xFF111827) : PosColors.line),
+            ),
+            child: Text(label, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: selected ? Colors.white : PosColors.ink)),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _action(String label, VoidCallback onPressed, {bool danger = false}) {
+    return FilledButton(
+      onPressed: _busy ? null : onPressed,
+      style: FilledButton.styleFrom(
+        backgroundColor: danger ? PosColors.danger : const Color(0xFF111827),
+        foregroundColor: Colors.white,
+        minimumSize: const Size(0, 36),
+        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        padding: const EdgeInsets.symmetric(horizontal: 14),
+        visualDensity: VisualDensity.compact,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+      ),
+      child: Text(label, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700)),
     );
   }
 }
