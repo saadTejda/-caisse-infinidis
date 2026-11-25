@@ -115,7 +115,7 @@ jobs:
           body: |
             Nom dans le menu : Caisse Resto.
             Paquet Android : com.infinidis.cafe_resto.
-            Android 11 : signature JAR SHA-1 et signature v2. Cible Android 11.
+            Compilée comme la caisse déjà installée : Android 14, signature JAR et v2.
             Nouvelle application, à côté de la caisse et de la préparation.
 
             Sur la tablette Lenovo, prenez le fichier « tablette-64bits ».

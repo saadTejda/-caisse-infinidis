@@ -10,7 +10,9 @@ val hasReleaseKey = !restoKeystore.isNullOrBlank()
 
 android {
     namespace = "com.caferesto.cafe_resto_caisse"
-    compileSdk = flutter.compileSdkVersion
+    // Android 14, comme la caisse qui s’installe sur cette tablette.
+    // Le compileSdk 36 fait planter le programme d’installation d’Android 11.
+    compileSdk = 34
     ndkVersion = flutter.ndkVersion
 
     compileOptions {
@@ -23,9 +25,8 @@ android {
         // par le lanceur Lenovo, et il ne faut pas recouvrir la caisse ni la préparation.
         applicationId = "com.infinidis.cafe_resto"
         minSdk = 23
-        // La tablette Lenovo est sous Android 11. Une cible plus récente
-        // fait fermer son installateur sans message.
-        targetSdk = 30
+        // Même cible que la caisse déjà installée sur la tablette.
+        targetSdk = 34
         // Uses the version code from pubspec.yaml. When using split APKs, 1000 * ABI_VERSION
         // is added automatically by Flutter. (https://developer.android.com/studio/build/configure-apk-splits#configure-APK-versions)
         // You can force using the value of versionCode by specifying the `-P force-version-code-ignoring-abi=true`
