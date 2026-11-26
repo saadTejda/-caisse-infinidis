@@ -115,8 +115,10 @@ void main() {
     );
     await open(const DeliveriesScreen(user: manager));
     expect(find.textContaining('Amina'), findsOneWidget);
-    expect(find.text('Zone'), findsOneWidget);
     expect(find.text('Appeler'), findsOneWidget);
+    await tester.tap(find.text('Zones'));
+    await tester.pumpAndSettle();
+    expect(find.text('Zone'), findsOneWidget);
 
     const driver = StaffUser(
       id: 4,

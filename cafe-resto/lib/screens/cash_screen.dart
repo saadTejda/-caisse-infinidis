@@ -4,7 +4,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../api/api_client.dart';
 import '../api/api_error.dart';
+import '../db/list_cache.dart';
 import '../providers/app_providers.dart';
+import '../services/order_queue.dart';
 import '../theme/pos_theme.dart';
 import 'pos_dialogs.dart';
 
@@ -27,11 +29,28 @@ class _CashScreenState extends ConsumerState<CashScreen> {
   String _movementType = 'cash_in';
   String? _error;
   bool _busy = false;
+  bool _fromCache = false;
+  bool _sending = false;
+  List<Map<String, dynamic>> _pending = [];
+  late final OrderQueue _queue;
 
   @override
   void initState() {
     super.initState();
+    _queue = ref.read(orderQueueProvider);
+    _queue.flushing.addListener(_onFlush);
     _load();
+  }
+
+  @override
+  void dispose() {
+    _queue.flushing.removeListener(_onFlush);
+    super.dispose();
+  }
+
+  void _onFlush() {
+    if (!mounted) return;
+    setState(() => _sending = _queue.flushing.value);
   }
 
   Future<void> _editAmount(TextEditingController controller, String title) async {
@@ -75,10 +94,36 @@ class _CashScreenState extends ConsumerState<CashScreen> {
     );
   }
 
+  Future<void> _readPending() async {
+    try {
+      final rows = await ref.read(orderQueueProvider).items();
+      if (mounted) setState(() => _pending = rows);
+    } catch (_) {}
+  }
+
+  double get _localCash {
+    var sum = 0.0;
+    for (final row in _pending) {
+      final payload = row['payload'];
+      if (payload is! Map) continue;
+      if ('${payload['_op'] ?? 'sale'}' != 'sale') continue;
+      if ('${payload['payment_method']}' != 'cash') continue;
+      sum += double.tryParse('${payload['_local_total']}'.replaceAll(',', '.')) ?? 0;
+    }
+    return sum;
+  }
+
   Future<void> _load() async {
+    await _readPending();
     final online = ref.read(onlineProvider).valueOrNull ?? true;
     if (!online) {
-      setState(() => _error = 'Connectez-vous pour lire la caisse. Le serveur ne répond pas.');
+      final cached = await loadList(ref.read(localStoreProvider), 'cash_session');
+      setState(() {
+        _session = cached.isEmpty ? null : cached.first;
+        _fromCache = _session != null;
+        _error = _session == null ? 'Pas encore synchronisé. Les totaux locaux restent visibles.' : null;
+        _busy = false;
+      });
       return;
     }
     setState(() {
@@ -102,11 +147,15 @@ class _CashScreenState extends ConsumerState<CashScreen> {
     } on DioException catch (e) {
       error ??= apiMessage(e, fallback: 'Impossible de lire le tiroir.');
     }
+    if (session != null) {
+      await saveList(ref.read(localStoreProvider), 'cash_session', [session]);
+    }
     if (mounted) {
       setState(() {
         _session = session;
         _history = history;
         _error = error;
+        _fromCache = false;
       });
     }
     try {
@@ -252,6 +301,21 @@ class _CashScreenState extends ConsumerState<CashScreen> {
             ),
           ],
         ),
+        if (_sending)
+          const Padding(
+            padding: EdgeInsets.only(top: 6),
+            child: Text('Envoi en cours. Ne recliquez pas, reprise automatique.', style: TextStyle(color: PosColors.accent, fontWeight: FontWeight.w800)),
+          ),
+        if (_pending.any((row) => '${row['last_error'] ?? ''}'.contains('interrompu')))
+          const Padding(
+            padding: EdgeInsets.only(top: 6),
+            child: Text('Envoi interrompu. Ne recliquez pas, reprise automatique.', style: TextStyle(color: PosColors.warning, fontWeight: FontWeight.w800)),
+          ),
+        if (_fromCache)
+          const Padding(
+            padding: EdgeInsets.only(top: 6),
+            child: Text('Totaux serveur enregistrés sur la tablette.', style: TextStyle(color: PosColors.muted, fontSize: 12)),
+          ),
         if (isOpen) ...[
           Text(
             'Session ${data['id'] ?? '—'}',
@@ -289,6 +353,13 @@ class _CashScreenState extends ConsumerState<CashScreen> {
           ),
         ] else ...[
           _totalsGrid(data, totals),
+          if (_localCash > 0 || _pending.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Text(
+              'Totaux locaux (provisoires) · espèces ${_cash(((double.tryParse('${totals['expected'] ?? data['closing_expected']}'.replaceAll(',', '.')) ?? 0) + _localCash))} · ${_pending.length} en file',
+              style: const TextStyle(fontWeight: FontWeight.w800, color: PosColors.accent),
+            ),
+          ],
           const SizedBox(height: 12),
           const Text('Mouvement', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 13)),
           const SizedBox(height: 6),
@@ -321,7 +392,7 @@ class _CashScreenState extends ConsumerState<CashScreen> {
               const SizedBox(width: 8),
               Expanded(flex: 3, child: _padField(_closingNote, 'Note de fermeture', () => _editText(_closingNote, 'Note de fermeture'))),
               const SizedBox(width: 8),
-              _action('Fermer', _close, danger: true),
+              _action('Fermer', _close, danger: true, enabled: _pending.isEmpty && !_sending),
             ],
           ),
         ],
@@ -424,9 +495,9 @@ class _CashScreenState extends ConsumerState<CashScreen> {
     );
   }
 
-  Widget _action(String label, VoidCallback onPressed, {bool danger = false}) {
+  Widget _action(String label, VoidCallback onPressed, {bool danger = false, bool enabled = true}) {
     return FilledButton(
-      onPressed: _busy ? null : onPressed,
+      onPressed: _busy || !enabled ? null : onPressed,
       style: FilledButton.styleFrom(
         backgroundColor: danger ? PosColors.danger : const Color(0xFF111827),
         foregroundColor: Colors.white,

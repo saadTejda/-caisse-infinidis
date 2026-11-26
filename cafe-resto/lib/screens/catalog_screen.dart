@@ -19,6 +19,7 @@ class _CatalogScreenState extends ConsumerState<CatalogScreen> {
   List<Map<String, dynamic>> _products = [];
   String? _error;
   bool _busy = false;
+  String _query = '';
 
   @override
   void initState() {
@@ -257,7 +258,33 @@ class _CatalogScreenState extends ConsumerState<CatalogScreen> {
             TextButton(onPressed: () => _saveProduct(), child: const Text('Ajouter')),
           ],
         ),
-        for (final product in _products)
+        ListTile(
+          leading: const Icon(Icons.search),
+          title: Text(_query.isEmpty ? 'Nom, SKU, code-barres' : _query),
+          onTap: () async {
+            final value = await showDialog<String>(
+              context: context,
+              builder: (context) {
+                final field = TextEditingController(text: _query);
+                return AlertDialog(
+                  title: const Text('Rechercher un produit'),
+                  content: TextField(controller: field, decoration: const InputDecoration(hintText: 'Nom, SKU, code-barres')),
+                  actions: [
+                    TextButton(onPressed: () => Navigator.pop(context, ''), child: const Text('Effacer')),
+                    FilledButton(onPressed: () => Navigator.pop(context, field.text), child: const Text('Chercher')),
+                  ],
+                );
+              },
+            );
+            if (value == null || !mounted) return;
+            setState(() => _query = value.trim());
+          },
+        ),
+        for (final product in _products.where((product) {
+          final query = _query.toLowerCase();
+          if (query.isEmpty) return true;
+          return ['name', 'sku', 'barcode', 'code'].any((key) => '${product[key] ?? ''}'.toLowerCase().contains(query));
+        }))
           ListTile(
             title: Text('${product['name']}'),
             subtitle: Text('${product['type']} · ${product['unit']} · ${product['sale_price'] ?? '—'}'),

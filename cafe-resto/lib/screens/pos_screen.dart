@@ -7,6 +7,7 @@ import '../api/api_client.dart';
 import '../api/api_error.dart';
 import '../providers/app_providers.dart';
 import '../theme/pos_theme.dart';
+import '../widgets/match_text.dart';
 import 'pos_dialogs.dart';
 
 class PosScreen extends ConsumerStatefulWidget {
@@ -74,6 +75,7 @@ class _PosScreenState extends ConsumerState<PosScreen> {
   Map<String, dynamic> _settings = {};
   Map<String, dynamic> _cash = {};
   String? _category;
+  bool _stockOnly = false;
   final List<_CartLine> _cart = [];
   String _orderType = 'dine_in';
   String _payment = 'cash';
@@ -190,14 +192,31 @@ class _PosScreenState extends ConsumerState<PosScreen> {
       if (category != null && '${map['category_name'] ?? 'Autres'}' != category) {
         return false;
       }
-      return _matchesSearch(map);
+      return _matchesSearch(map) && _stockVisible(map);
     }).length;
   }
 
   bool _matchesSearch(Map<String, dynamic> product) {
     final query = _search.text.trim().toLowerCase();
     if (query.isEmpty) return true;
-    return '${product['name']}'.toLowerCase().contains(query);
+    for (final key in const ['name', 'sku', 'barcode', 'code', 'reference']) {
+      if ('${product[key] ?? ''}'.toLowerCase().contains(query)) return true;
+    }
+    return false;
+  }
+
+  bool _stockVisible(Map<String, dynamic> product) {
+    if (!_stockOnly) return true;
+    final stock = _stockOf(product);
+    return stock == null || stock > 0;
+  }
+
+  num? _stockOf(Map<String, dynamic> product) {
+    for (final key in const ['stock', 'stock_on_hand', 'quantity_on_hand']) {
+      final value = num.tryParse('${product[key]}');
+      if (value != null) return value;
+    }
+    return null;
   }
 
   List<Map<String, dynamic>> get _products {
@@ -205,6 +224,7 @@ class _PosScreenState extends ConsumerState<PosScreen> {
         .map((e) => Map<String, dynamic>.from(e as Map))
         .where((p) => _category == null || '${p['category_name']}' == _category)
         .where(_matchesSearch)
+        .where(_stockVisible)
         .toList()
       ..sort((a, b) {
         final category = (int.tryParse('${a['category_sort']}') ?? 0).compareTo(int.tryParse('${b['category_sort']}') ?? 0);
@@ -428,6 +448,7 @@ class _PosScreenState extends ConsumerState<PosScreen> {
           )
           .toList(),
       'client_created_at': DateTime.now().toUtc().toIso8601String(),
+      '_local_total': _payable,
     };
 
     try {
@@ -775,8 +796,9 @@ class _PosScreenState extends ConsumerState<PosScreen> {
             scrollDirection: Axis.horizontal,
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
             children: [
-              _categoryChip(null, 'Tous (${_count(null)})'),
-              ..._categories.map((name) => _categoryChip(name, '$name (${_count(name)})')),
+              _categoryChip(null, 'Tous (${_count(null)})', null),
+              _stockChip(),
+              ..._categories.indexed.map((entry) => _categoryChip(entry.$2, '${entry.$2} (${_count(entry.$2)})', entry.$1)),
             ],
           ),
         ),
@@ -785,8 +807,9 @@ class _PosScreenState extends ConsumerState<PosScreen> {
             builder: (context, constraints) {
               final cols = (constraints.maxWidth / 168).floor().clamp(2, 8);
               if (_products.isEmpty) {
-                return const Center(
-                  child: Text('Aucun produit', style: TextStyle(color: PosColors.muted)),
+                final filtered = _search.text.trim().isNotEmpty || _stockOnly || _category != null;
+                return Center(
+                  child: Text(filtered ? 'Aucun résultat' : 'Aucun produit', style: const TextStyle(color: PosColors.muted)),
                 );
               }
               return GridView.builder(
@@ -807,26 +830,65 @@ class _PosScreenState extends ConsumerState<PosScreen> {
     );
   }
 
-  Widget _categoryChip(String? value, String label) {
-    final selected = _category == value;
+  static const _categoryColors = <Color>[
+    PosColors.info,
+    PosColors.warning,
+    PosColors.progress,
+    PosColors.success,
+    PosColors.paid,
+    PosColors.accent,
+  ];
+
+  Widget _stockChip() {
     return Padding(
       padding: const EdgeInsets.only(right: 8),
       child: Material(
-        color: selected ? const Color(0xFF111827) : Colors.white,
+        color: _stockOnly ? PosColors.success : Colors.white,
+        borderRadius: BorderRadius.circular(999),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(999),
+          onTap: () => setState(() => _stockOnly = !_stockOnly),
+          child: Container(
+            height: 36,
+            padding: const EdgeInsets.symmetric(horizontal: 14),
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(999),
+              border: Border.all(color: _stockOnly ? PosColors.success : PosColors.line),
+            ),
+            child: Text(
+              'En stock',
+              style: TextStyle(color: _stockOnly ? Colors.white : PosColors.ink, fontWeight: FontWeight.w700, fontSize: 13),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _categoryChip(String? value, String label, int? colorIndex) {
+    final selected = _category == value;
+    final tint = colorIndex == null ? PosColors.ink : _categoryColors[colorIndex % _categoryColors.length];
+    return Padding(
+      padding: const EdgeInsets.only(right: 8),
+      child: Material(
+        color: selected ? tint : Colors.white,
         borderRadius: BorderRadius.circular(999),
         child: InkWell(
           borderRadius: BorderRadius.circular(999),
           onTap: () => setState(() => _category = value),
           child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+            height: 36,
+            padding: const EdgeInsets.symmetric(horizontal: 14),
+            alignment: Alignment.center,
             decoration: BoxDecoration(
               borderRadius: BorderRadius.circular(999),
-              border: Border.all(color: selected ? const Color(0xFF111827) : PosColors.line),
+              border: Border.all(color: selected ? tint : tint.withValues(alpha: 0.45)),
             ),
             child: Text(
               label,
               style: TextStyle(
-                color: selected ? Colors.white : PosColors.ink,
+                color: selected ? Colors.white : tint,
                 fontWeight: FontWeight.w700,
                 fontSize: 13,
               ),
@@ -855,6 +917,16 @@ class _PosScreenState extends ConsumerState<PosScreen> {
               child: Stack(
                 children: [
                   Positioned.fill(child: ColoredBox(color: color)),
+                  if (_stockOf(product) != null)
+                    Positioned(
+                      left: 8,
+                      top: 8,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                        decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(999)),
+                        child: Text('${_stockOf(product)}', style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w800)),
+                      ),
+                    ),
                   Positioned(
                     top: 8,
                     right: 8,
@@ -882,11 +954,11 @@ class _PosScreenState extends ConsumerState<PosScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      '${product['name']}',
+                    MatchText(
+                      text: '${product['name']}',
+                      query: _search.text,
                       maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13, height: 1.15),
+                      style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13, height: 1.15, color: PosColors.ink),
                     ),
                     const Spacer(),
                     Text(

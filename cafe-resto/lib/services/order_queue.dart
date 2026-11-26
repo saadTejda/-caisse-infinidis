@@ -1,12 +1,32 @@
 import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart';
 
 import '../db/local_store.dart';
+
+Map<String, dynamic> stripPrivate(Map<String, dynamic> body) {
+  return {
+    for (final entry in body.entries)
+      if (!entry.key.startsWith('_')) entry.key: entry.value,
+  };
+}
+
+String queuePath(String op, {Object? orderId, Object? deliveryId}) {
+  return switch (op) {
+    'sale_update' => '/api/v1/orders/$orderId/changes',
+    'sale_cancel' => '/api/v1/orders/$orderId/cancel',
+    'delivery_assign' => '/api/v1/deliveries/$deliveryId/assign',
+    'driver_payment' => '/api/v1/deliveries/$deliveryId/driver-payment',
+    _ => '/api/v1/orders',
+  };
+}
 
 class OrderQueue {
   OrderQueue(this._dio, this._store);
 
   final Dio _dio;
   final LocalStore _store;
+  final flushing = ValueNotifier<bool>(false);
+  bool _flushing = false;
 
   Future<Map<String, dynamic>> checkout({
     required Map<String, dynamic> payload,
@@ -23,7 +43,7 @@ class OrderQueue {
     try {
       final response = await _dio.post(
         '/api/v1/orders',
-        data: body,
+        data: stripPrivate(body),
         options: Options(headers: {'Idempotency-Key': idempotencyKey}),
       );
       return {
@@ -67,49 +87,55 @@ class OrderQueue {
     return pending.where((item) => '${item['last_error'] ?? ''}'.isNotEmpty).length;
   }
 
+  Future<List<Map<String, dynamic>>> items() => _store.pendingOrders();
+
   Future<int> flush() async {
+    if (_flushing) return 0;
+    _flushing = true;
+    flushing.value = true;
     final pending = await _store.pendingOrders();
     var synced = 0;
-    for (final item in pending) {
-      final id = item['id'] as String;
-      final payload = Map<String, dynamic>.from(item['payload'] as Map);
-      final op = '${payload.remove('_op') ?? 'sale'}';
-      final orderId = payload.remove('_order_id');
-      try {
-        final path = switch (op) {
-          'sale_update' => '/api/v1/orders/$orderId/changes',
-          'sale_cancel' => '/api/v1/orders/$orderId/cancel',
-          _ => '/api/v1/orders',
-        };
-        await _dio.post(
-          path,
-          data: payload,
-          options: Options(headers: {'Idempotency-Key': id}),
-        );
-        await _store.removePending(id);
-        synced++;
-      } on DioException catch (error) {
-        final status = error.response?.statusCode;
-        if (status == 200 || status == 201) {
+    try {
+      for (final item in pending) {
+        final id = item['id'] as String;
+        final payload = Map<String, dynamic>.from(item['payload'] as Map);
+        final op = '${payload['_op'] ?? 'sale'}';
+        final orderId = payload['_order_id'];
+        final deliveryId = payload['_delivery_id'];
+        try {
+          await _dio.post(
+            queuePath(op, orderId: orderId, deliveryId: deliveryId),
+            data: stripPrivate(payload),
+            options: Options(headers: {'Idempotency-Key': id}),
+          );
           await _store.removePending(id);
           synced++;
-          continue;
+        } on DioException catch (error) {
+          final status = error.response?.statusCode;
+          if (status == 200 || status == 201) {
+            await _store.removePending(id);
+            synced++;
+            continue;
+          }
+          if (status == 404 || status == 405) {
+            await _store.bumpPending(id, 'Le serveur ne connaît pas encore cette opération.');
+            continue;
+          }
+          if (status == 409 || status == 422 && _looksLikeReplay(error)) {
+            await _store.removePending(id);
+            synced++;
+            continue;
+          }
+          if (_isNetworkError(error)) {
+            await _store.bumpPending(id, 'Envoi interrompu. Ne recliquez pas, reprise automatique.');
+            break;
+          }
+          await _store.bumpPending(id, error.message ?? 'error');
         }
-        // Idempotent replay conflict with same key should still clear.
-        if (status == 404 || status == 405) {
-          await _store.bumpPending(id, 'Le serveur ne connaît pas encore cette opération.');
-          continue;
-        }
-        if (status == 409 || status == 422 && _looksLikeReplay(error)) {
-          await _store.removePending(id);
-          synced++;
-          continue;
-        }
-        if (_isNetworkError(error)) {
-          break;
-        }
-        await _store.bumpPending(id, error.message ?? 'error');
       }
+    } finally {
+      _flushing = false;
+      flushing.value = false;
     }
     return synced;
   }

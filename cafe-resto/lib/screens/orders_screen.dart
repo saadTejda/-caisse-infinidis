@@ -7,8 +7,11 @@ import 'package:uuid/uuid.dart';
 import '../api/api_client.dart';
 import '../api/api_error.dart';
 import '../auth/staff_user.dart';
+import '../db/list_cache.dart';
 import '../providers/app_providers.dart';
 import '../theme/pos_theme.dart';
+import '../widgets/match_text.dart';
+import '../widgets/status_chip.dart';
 
 class OrdersScreen extends ConsumerStatefulWidget {
   const OrdersScreen({super.key, this.user = StaffUser.empty});
@@ -23,6 +26,8 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
   List<Map<String, dynamic>> _orders = [];
   String? _error;
   bool _busy = false;
+  bool _fromCache = false;
+  String _query = '';
 
   @override
   void initState() {
@@ -35,11 +40,26 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
       _busy = true;
       _error = null;
     });
+    final store = ref.read(localStoreProvider);
+    final cached = await loadList(store, 'orders_cache');
     try {
       final response = await ref.read(dioProvider).get('/api/v1/orders');
-      setState(() => _orders = apiList(response.data));
+      final rows = apiList(response.data);
+      await saveList(store, 'orders_cache', rows);
+      setState(() {
+        _orders = rows;
+        _fromCache = false;
+      });
     } on DioException catch (error) {
-      setState(() => _error = apiMessage(error));
+      setState(() {
+        if (cached.isNotEmpty) {
+          _orders = cached;
+          _fromCache = true;
+          _error = null;
+        } else {
+          _error = cached.isEmpty ? 'Pas encore synchronisé' : apiMessage(error);
+        }
+      });
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -49,7 +69,8 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
 
   Future<void> _open(Map<String, dynamic> order) async {
     final id = _orderId(order);
-    if (id == null) {
+    final online = ref.read(onlineProvider).valueOrNull ?? false;
+    if (id == null || !online) {
       await _showTicket(order);
       return;
     }
@@ -233,40 +254,130 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
             ],
           ),
         ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+          child: Material(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(12),
+            child: InkWell(
+              borderRadius: BorderRadius.circular(12),
+              onTap: () async {
+                final field = TextEditingController(text: _query);
+                final value = await showDialog<String>(
+                  context: context,
+                  builder: (context) => AlertDialog(
+                    title: const Text('Recherche'),
+                    content: TextField(
+                      controller: field,
+                      decoration: const InputDecoration(hintText: 'Code commande, client, téléphone…'),
+                    ),
+                    actions: [
+                      TextButton(onPressed: () => Navigator.pop(context, ''), child: const Text('Effacer')),
+                      FilledButton(onPressed: () => Navigator.pop(context, field.text), child: const Text('Chercher')),
+                    ],
+                  ),
+                );
+                if (value == null || !mounted) return;
+                setState(() => _query = value.trim());
+              },
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                child: Row(
+                  children: [
+                    const Icon(Icons.search, color: PosColors.muted),
+                    const SizedBox(width: 8),
+                    Expanded(child: Text(_query.isEmpty ? 'Code commande, client, téléphone…' : _query)),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+        if (_fromCache)
+          const Padding(
+            padding: EdgeInsets.fromLTRB(16, 8, 16, 0),
+            child: Text('Liste enregistrée sur la tablette.', style: TextStyle(color: PosColors.accent, fontWeight: FontWeight.w700)),
+          ),
         if (_error != null)
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
             child: Text(_error!, style: const TextStyle(color: PosColors.danger)),
           ),
-        Expanded(child: _orders.isEmpty
-            ? const Center(child: Text('Aucune commande', style: TextStyle(color: PosColors.muted)))
+        Expanded(child: _visible.isEmpty
+            ? Center(child: Text(_emptyLabel, style: const TextStyle(color: PosColors.muted)))
             : _list()),
       ],
     );
   }
 
+  List<Map<String, dynamic>> get _visible {
+    return _orders.where((order) => rowMatches(order, _query, const ['public_ref', 'id', 'customer_name', 'customer_phone', 'type'])).toList();
+  }
+
+  String get _emptyLabel {
+    if (_query.isNotEmpty) return 'Aucun résultat';
+    if (_orders.isEmpty && _error != null) return 'Pas encore synchronisé';
+    return 'Aucune commande';
+  }
+
+  StatusTone _tone(Map<String, dynamic> order) {
+    return switch ('${order['status'] ?? order['type']}') {
+      'cancelled' => StatusTone.cancelled,
+      'paid' => StatusTone.paid,
+      'pending' => StatusTone.waiting,
+      'delivery' => StatusTone.assigned,
+      'takeaway' => StatusTone.progress,
+      _ => StatusTone.delivered,
+    };
+  }
+
   Widget _list() {
+    final rows = _visible;
     return RefreshIndicator(
       onRefresh: _load,
       child: ListView.separated(
         padding: const EdgeInsets.all(16),
-        itemCount: _orders.length,
+        itemCount: rows.length,
         separatorBuilder: (context, index) => const SizedBox(height: 8),
         itemBuilder: (context, index) {
-          final order = _orders[index];
+          final order = rows[index];
+          final ref = '${order['public_ref'] ?? order['id']}';
           return Material(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(14),
+            color: index.isOdd ? const Color(0xFFF8FAFC) : Colors.white,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(14),
+              side: const BorderSide(color: PosColors.line),
+            ),
             child: ListTile(
               onTap: () => _open(order),
-              title: Text('${order['public_ref'] ?? order['id']}', style: const TextStyle(fontWeight: FontWeight.w800)),
+              title: MatchText(text: ref, query: _query, style: const TextStyle(fontWeight: FontWeight.w800, fontFamily: 'monospace')),
               subtitle: Text('${order['sold_at'] ?? ''} · ${order['type'] ?? ''} · ${order['payment_method'] ?? ''}'),
-              trailing: Text('${order['total'] ?? ''} ${order['currency'] ?? 'DH'}', style: const TextStyle(fontWeight: FontWeight.w800)),
+              trailing: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  StatusChip(label: _chipLabel(order), tone: _tone(order)),
+                  const SizedBox(width: 8),
+                  Text('${order['total'] ?? ''} ${order['currency'] ?? 'DH'}', style: const TextStyle(fontWeight: FontWeight.w800)),
+                ],
+              ),
             ),
           );
         },
       ),
     );
+  }
+
+  String _chipLabel(Map<String, dynamic> order) {
+    return switch ('${order['status'] ?? ''}') {
+      'cancelled' => 'Annulée',
+      'paid' => 'Payée',
+      'pending' => 'En attente',
+      _ => switch ('${order['type']}') {
+          'delivery' => 'Livraison',
+          'takeaway' => 'Emporter',
+          _ => 'Sur place',
+        },
+    };
   }
 }
 
