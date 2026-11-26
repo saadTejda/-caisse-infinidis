@@ -11,6 +11,10 @@ class PosColors {
   static const pos = Color(0xFFEEF0F4);
   static const danger = Color(0xFFDC2626);
   static const success = Color(0xFF16A34A);
+  static const warning = Color(0xFFEA580C);
+  static const info = Color(0xFF2563EB);
+  static const progress = Color(0xFF4F46E5);
+  static const paid = Color(0xFF166534);
   static const line = Color(0xFFE2E8F0);
 }
 

@@ -8,6 +8,7 @@ import '../l10n/caisse_text.dart';
 import '../providers/app_providers.dart';
 import '../services/print_service.dart';
 import '../theme/pos_theme.dart';
+import '../widgets/pos_status_bar.dart';
 import 'business_settings_screen.dart';
 import 'cash_screen.dart';
 import 'catalog_screen.dart';
@@ -28,6 +29,8 @@ class PosShell extends ConsumerStatefulWidget {
 
 class _PosShellState extends ConsumerState<PosShell> {
   int _pending = 0;
+  int _errors = 0;
+  bool? _sessionOpen;
   int _refreshToken = 0;
   String _module = 'pos';
   StaffUser _user = StaffUser.empty;
@@ -76,7 +79,7 @@ class _PosShellState extends ConsumerState<PosShell> {
         _module = modules.isEmpty ? '' : modules.first;
       });
     }
-    _refreshPending();
+    _refreshHeader();
   }
 
   List<String> _modulesFor(StaffUser user) {
@@ -93,16 +96,26 @@ class _PosShellState extends ConsumerState<PosShell> {
     return modules;
   }
 
-  Future<void> _refreshPending() async {
-    final count = await ref.read(orderQueueProvider).pendingCount();
-    if (mounted) setState(() => _pending = count);
+  Future<void> _refreshHeader() async {
+    final queue = ref.read(orderQueueProvider);
+    final count = await queue.pendingCount();
+    final errors = await queue.errorCount();
+    final raw = await ref.read(localStoreProvider).getJson('cash_status');
+    final open = raw is Map && raw.containsKey('session_open') ? raw['session_open'] == true : null;
+    if (mounted) {
+      setState(() {
+        _pending = count;
+        _errors = errors;
+        _sessionOpen = open;
+      });
+    }
   }
 
   Future<void> _sync() async {
     try {
       final synced = await ref.read(orderQueueProvider).flush();
       if (_user.can('pos.access')) await ref.read(syncServiceProvider).bootstrap();
-      await _refreshPending();
+      await _refreshHeader();
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Sync OK ($synced)')));
       setState(() => _refreshToken++);
@@ -129,7 +142,11 @@ class _PosShellState extends ConsumerState<PosShell> {
     ref.listen(onlineProvider, (previous, next) {
       final was = previous?.valueOrNull ?? false;
       final now = next.valueOrNull ?? false;
-      if (now && !was) _sync();
+      if (now && !was) {
+        _sync();
+      } else {
+        _refreshHeader();
+      }
     });
     final code = ref.watch(localeCodeProvider);
     final online = ref.watch(onlineProvider).valueOrNull;
@@ -155,7 +172,10 @@ class _PosShellState extends ConsumerState<PosShell> {
           NavigationRail(
             backgroundColor: Colors.white,
             selectedIndex: selected < 0 ? 0 : selected,
-            onDestinationSelected: (index) => setState(() => _module = modules[index]),
+            onDestinationSelected: (index) {
+              setState(() => _module = modules[index]);
+              _refreshHeader();
+            },
             labelType: NavigationRailLabelType.all,
             leading: InkWell(
               onTap: _logout,
@@ -178,8 +198,7 @@ class _PosShellState extends ConsumerState<PosShell> {
           Expanded(
             child: Column(
               children: [
-                _linkBar(online),
-                _printerStatus(),
+                _statusBar(online),
                 Expanded(child: _module == 'pos' ? _body(modules) : SafeArea(child: _body(modules))),
               ],
             ),
@@ -189,32 +208,22 @@ class _PosShellState extends ConsumerState<PosShell> {
     );
   }
 
-  Widget _linkBar(bool? online) {
-    final label = online == null ? 'Vérification du serveur…' : (online ? 'En ligne' : 'Hors ligne');
-    final color = online == true ? PosColors.success : (online == false ? PosColors.danger : PosColors.muted);
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-      child: Text(label, style: TextStyle(color: color, fontSize: 12, fontWeight: FontWeight.w800)),
-    );
-  }
-
-  Widget _printerStatus() {
+  Widget _statusBar(bool? online) {
     final service = ref.watch(printServiceProvider);
     return ValueListenableBuilder<PrinterLink>(
       valueListenable: service.link,
       builder: (context, value, _) {
-        if (value == PrinterLink.none) return const SizedBox.shrink();
-        final color = value == PrinterLink.connected
-            ? PosColors.success
-            : value == PrinterLink.connecting
-                ? PosColors.accent
-                : PosColors.danger;
-        return Container(
-          width: double.infinity,
-          color: color.withValues(alpha: 0.12),
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-          child: Text(printerLinkLabel(value), style: TextStyle(color: color, fontSize: 12, fontWeight: FontWeight.w700)),
+        return PosStatusBar(
+          online: online,
+          sessionOpen: _sessionOpen,
+          pending: _pending,
+          errors: _errors,
+          printer: switch (value) {
+            PrinterLink.none => PrinterChip.hidden,
+            PrinterLink.connecting => PrinterChip.connecting,
+            PrinterLink.connected => PrinterChip.ready,
+            PrinterLink.offline => PrinterChip.down,
+          },
         );
       },
     );
@@ -238,7 +247,7 @@ class _PosShellState extends ConsumerState<PosShell> {
           userName: _user.name.isEmpty ? 'Caisse' : _user.name,
           pendingCount: _pending,
           refreshToken: _refreshToken,
-          onCheckoutDone: _refreshPending,
+          onCheckoutDone: _refreshHeader,
           onOpenDrawer: _user.can('cash.operate') ? () => setState(() => _module = 'cash') : null,
           onBack: _logout,
           onSync: _sync,
