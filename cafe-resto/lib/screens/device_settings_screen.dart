@@ -1,16 +1,19 @@
-import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:print_bluetooth_thermal/print_bluetooth_thermal.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 
-import '../api/api_client.dart';
-import '../api/api_error.dart';
+import '../printing/ticket_printer.dart';
+import '../printing/ticket_printer_store.dart';
 import '../providers/app_providers.dart';
 import '../theme/pos_theme.dart';
-import 'pos_dialogs.dart';
 
-/// Surcharge locale (adresse BT scannée) au-dessus des réglages web.
+const _roleLabels = {
+  'receipt': 'Ticket de caisse',
+  'kitchen1': 'Cuisine 1',
+  'kitchen2': 'Cuisine 2',
+};
+
+/// Réglage des tickets de cette tablette : choix simple, puis détails repliés.
 class DeviceSettingsScreen extends ConsumerStatefulWidget {
   const DeviceSettingsScreen({super.key});
 
@@ -19,11 +22,10 @@ class DeviceSettingsScreen extends ConsumerStatefulWidget {
 }
 
 class _DeviceSettingsScreenState extends ConsumerState<DeviceSettingsScreen> {
-  Map<String, dynamic> _settings = {};
-  List<BluetoothInfo> _devices = [];
-  String? _overrideBt;
+  final _store = TicketPrinterStore();
+  Map<String, TicketPrinter> _printers = {};
   String? _message;
-  bool _scanning = false;
+  bool _busy = true;
 
   @override
   void initState() {
@@ -33,197 +35,380 @@ class _DeviceSettingsScreenState extends ConsumerState<DeviceSettingsScreen> {
 
   Future<void> _load() async {
     final settings = await ref.read(syncServiceProvider).settings();
-    final prefs = await SharedPreferences.getInstance();
+    final printers = await _store.loadOrSeed(settings);
+    if (!mounted) return;
     setState(() {
-      _settings = settings;
-      _overrideBt = prefs.getString('bt_override');
+      _printers = printers;
+      _busy = false;
     });
   }
 
-  Future<void> _scan() async {
-    setState(() {
-      _scanning = true;
-      _message = null;
-    });
-    try {
-      final bonded = await PrintBluetoothThermal.pairedBluetooths;
-      setState(() => _devices = bonded);
-    } catch (e) {
-      setState(() => _message = 'Scan BT impossible: $e');
-    } finally {
-      if (mounted) setState(() => _scanning = false);
-    }
-  }
-
-  Future<void> _saveOverride(String? mac) async {
-    final prefs = await SharedPreferences.getInstance();
-    if (mac == null || mac.isEmpty) {
-      await prefs.remove('bt_override');
-    } else {
-      await prefs.setString('bt_override', mac);
-    }
-    setState(() {
-      _overrideBt = mac;
-      _message = 'Adresse Bluetooth locale enregistrée.';
-    });
-  }
-
-  bool _flag(String key) {
-    final value = _settings[key];
-    return value == true || value == 1 || value == '1' || value == 'true';
-  }
-
-  Future<void> _editPrinter(String slot, String title) async {
-    var enabled = _flag('pos.${slot}_enabled');
-    var name = '${_settings['pos.${slot}_name'] ?? title}';
-    var transport = '${_settings['pos.${slot}_transport'] ?? 'wifi'}';
-    var host = '${_settings['pos.${slot}_host'] ?? ''}';
-    var port = '${_settings['pos.${slot}_port'] ?? '9100'}';
-    var width = '${_settings['pos.${slot}_paper_width'] ?? '80'}';
-    var bt = '${_settings['pos.${slot}_bt_address'] ?? ''}';
-    final saved = await showDialog<bool>(
-      context: context,
-      builder: (context) => StatefulBuilder(
-        builder: (context, setLocal) {
-          Future<void> edit(String label, String current, ValueChanged<String> apply, {bool phone = false}) async {
-            final value = await showPosTextPad(context, title: label, initial: current, hint: label, phone: phone);
-            if (value != null) setLocal(() => apply(value));
-          }
-
-          Widget line(String label, String value, VoidCallback onTap) {
-            return ListTile(
-              dense: true,
-              contentPadding: EdgeInsets.zero,
-              title: Text(label, style: const TextStyle(fontSize: 12, color: PosColors.muted)),
-              subtitle: Text(value.isEmpty ? '—' : value, maxLines: 1, overflow: TextOverflow.ellipsis),
-              onTap: onTap,
-            );
-          }
-
-          return AlertDialog(
-            title: Text(title),
-            content: SizedBox(
-              width: 360,
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  SwitchListTile(
-                    contentPadding: EdgeInsets.zero,
-                    title: const Text('Active'),
-                    value: enabled,
-                    onChanged: (value) => setLocal(() => enabled = value),
-                  ),
-                  line('Nom', name, () => edit('Nom', name, (value) => name = value)),
-                  Wrap(
-                    spacing: 6,
-                    children: [
-                      ChoiceChip(label: const Text('Wi-Fi'), selected: transport == 'wifi', onSelected: (_) => setLocal(() => transport = 'wifi')),
-                      ChoiceChip(label: const Text('Bluetooth'), selected: transport == 'bluetooth', onSelected: (_) => setLocal(() => transport = 'bluetooth')),
-                      ChoiceChip(label: const Text('58 mm'), selected: width == '58', onSelected: (_) => setLocal(() => width = '58')),
-                      ChoiceChip(label: const Text('80 mm'), selected: width == '80', onSelected: (_) => setLocal(() => width = '80')),
-                    ],
-                  ),
-                  if (transport == 'wifi') ...[
-                    line('Adresse IP', host, () => edit('Adresse IP', host, (value) => host = value)),
-                    line('Port', port, () => edit('Port', port, (value) => port = value, phone: true)),
-                  ] else
-                    line('Adresse Bluetooth', bt, () => edit('Bluetooth', bt, (value) => bt = value)),
-                ],
-              ),
-            ),
-            actions: [
-              TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Annuler')),
-              FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('Enregistrer')),
-            ],
-          );
-        },
-      ),
+  Future<void> _open(String role) async {
+    final current = _printers[role] ?? TicketPrinter.fromPreset(presetById('generic_80'), role: role);
+    final edited = await Navigator.of(context).push<TicketPrinter>(
+      MaterialPageRoute(builder: (_) => _PrinterEditor(title: _roleLabels[role] ?? role, printer: TicketPrinter.fromJson(current.toJson()))),
     );
-    if (saved != true) return;
-    try {
-      await ref.read(dioProvider).put('/api/v1/settings', data: {
-        'values': {
-          'pos.${slot}_enabled': enabled,
-          'pos.${slot}_name': name,
-          'pos.${slot}_transport': transport,
-          'pos.${slot}_host': host,
-          'pos.${slot}_port': int.tryParse(port) ?? 9100,
-          'pos.${slot}_paper_width': width,
-          'pos.${slot}_bt_address': bt,
-        },
-      });
-      await ref.read(syncServiceProvider).bootstrap();
-      await _load();
-      if (!mounted) return;
-      setState(() => _message = '$title enregistrée.');
-    } on DioException catch (error) {
-      if (!mounted) return;
-      setState(() => _message = apiMessage(error));
-    }
+    if (edited == null) return;
+    final next = Map<String, TicketPrinter>.from(_printers);
+    next[role] = edited;
+    await _store.write(next);
+    if (!mounted) return;
+    setState(() {
+      _printers = next;
+      _message = '${_roleLabels[role]} enregistrée sur cette tablette.';
+    });
   }
 
   @override
   Widget build(BuildContext context) {
-    String value(String key) => '${_settings[key] ?? '—'}';
-
     return Scaffold(
-      appBar: AppBar(title: const Text('Imprimantes appareil')),
+      appBar: AppBar(title: const Text('Imprimantes')),
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
           const Text(
-            'Touchez une imprimante pour choisir le mode, l’adresse et la largeur du papier.',
+            'Chaque tablette garde ses propres imprimantes. Choisissez l’appareil, le modèle se règle tout seul.',
             style: TextStyle(color: PosColors.muted),
           ),
+          if (_message != null) ...[
+            const SizedBox(height: 8),
+            Text(_message!, style: const TextStyle(color: PosColors.success)),
+          ],
+          if (_busy) const LinearProgressIndicator(),
           const SizedBox(height: 8),
-          _tile('Ticket', 'receipt_printer', value('pos.receipt_printer_transport'), value('pos.receipt_printer_host'), value('pos.receipt_printer_paper_width')),
-          _tile('Cuisine 1', 'kitchen_printer_1', value('pos.kitchen_printer_1_transport'), value('pos.kitchen_printer_1_host'), value('pos.kitchen_printer_1_paper_width')),
-          _tile('Cuisine 2', 'kitchen_printer_2', value('pos.kitchen_printer_2_transport'), value('pos.kitchen_printer_2_host'), value('pos.kitchen_printer_2_paper_width')),
-          const Divider(height: 32),
-          const Text(
-            'Bluetooth local (surcharge)',
-            style: TextStyle(fontWeight: FontWeight.w800),
+          for (final role in ticketPrinterRoles.keys)
+            Card(
+              child: ListTile(
+                title: Text(_roleLabels[role] ?? role),
+                subtitle: Text(
+                  _printers[role]?.summary ?? 'Pas encore réglée',
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                trailing: const Icon(Icons.chevron_right),
+                onTap: _busy ? null : () => _open(role),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _PrinterEditor extends StatefulWidget {
+  const _PrinterEditor({required this.title, required this.printer});
+
+  final String title;
+  final TicketPrinter printer;
+
+  @override
+  State<_PrinterEditor> createState() => _PrinterEditorState();
+}
+
+class _PrinterEditorState extends State<_PrinterEditor> {
+  late final TicketPrinter _printer = widget.printer;
+  late String _brand = presetById(_printer.presetId).brand;
+  final _host = TextEditingController();
+  final _port = TextEditingController();
+  List<BluetoothInfo> _devices = [];
+  bool _loading = false;
+  String? _message;
+  bool _error = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _host.text = _printer.host;
+    _port.text = '${_printer.port}';
+    if (_printer.connection == 'bluetooth') _loadDevices();
+  }
+
+  @override
+  void dispose() {
+    _host.dispose();
+    _port.dispose();
+    super.dispose();
+  }
+
+  List<PrinterPreset> get _models => printerPresets.where((preset) => preset.brand == _brand).toList();
+
+  void _say(String message, {bool error = false}) {
+    setState(() {
+      _message = message;
+      _error = error;
+    });
+  }
+
+  Future<void> _loadDevices() async {
+    setState(() => _loading = true);
+    try {
+      final list = await PrintBluetoothThermal.pairedBluetooths;
+      if (!mounted) return;
+      setState(() => _devices = list);
+      if (list.isEmpty) {
+        _say('Aucun appareil appairé. Allumez l’imprimante, appairez-la dans les réglages Bluetooth d’Android, puis actualisez.', error: true);
+      }
+    } catch (_) {
+      _say('Impossible de lire les appareils Bluetooth. Vérifiez que le Bluetooth de la tablette est allumé.', error: true);
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  void _pickDevice(BluetoothInfo device) {
+    final found = detectPreset(device.name);
+    setState(() {
+      _printer.address = device.macAdress;
+      _printer.deviceName = device.name;
+      if (found != null) {
+        _printer.applyPreset(found);
+        _brand = found.brand;
+        _say('Modèle reconnu : ${found.label}. Papier ${found.paper} mm.');
+        _error = false;
+      } else {
+        _say('Modèle non reconnu. Choisissez la marque, ou gardez « Autre imprimante ».');
+        _error = false;
+      }
+    });
+  }
+
+  void _applyModel(String id) {
+    final preset = presetById(id);
+    setState(() => _printer.applyPreset(preset));
+  }
+
+  void _save() {
+    _printer.host = _host.text.trim();
+    _printer.port = int.tryParse(_port.text.trim()) ?? 9100;
+    if (_printer.connection == 'network' && _printer.host.isEmpty) {
+      _say('Saisissez l’adresse IP de l’imprimante.', error: true);
+      return;
+    }
+    if (_printer.connection == 'bluetooth' && _printer.address.isEmpty) {
+      _say('Choisissez l’imprimante Bluetooth.', error: true);
+      return;
+    }
+    Navigator.of(context).pop(_printer);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: Text(widget.title)),
+      body: ListView(
+        padding: const EdgeInsets.all(16),
+        children: [
+          SwitchListTile(
+            contentPadding: EdgeInsets.zero,
+            title: const Text('Utiliser cette imprimante'),
+            value: _printer.enabled,
+            onChanged: (value) => setState(() => _printer.enabled = value),
           ),
-          const SizedBox(height: 4),
-          Text(
-            _overrideBt == null || _overrideBt!.isEmpty
-                ? 'Aucune surcharge — les adresses web sont utilisées.'
-                : 'Surcharge: $_overrideBt',
-            style: const TextStyle(color: PosColors.muted),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              _mode('Bluetooth', 'bluetooth'),
+              const SizedBox(width: 8),
+              _mode('Réseau', 'network'),
+            ],
           ),
           const SizedBox(height: 12),
-          ElevatedButton(
-            onPressed: _scanning ? null : _scan,
-            child: Text(_scanning ? 'Scan…' : 'Scanner les appareils appairés'),
-          ),
-          TextButton(
-            onPressed: () => _saveOverride(null),
-            child: const Text('Effacer la surcharge'),
-          ),
-          if (_message != null)
-            Text(_message!, style: const TextStyle(color: PosColors.success)),
-          ..._devices.map(
-            (d) => ListTile(
-              title: Text(d.name),
-              subtitle: Text(d.macAdress),
-              trailing: const Icon(Icons.bluetooth),
-              onTap: () => _saveOverride(d.macAdress),
+          if (_printer.connection == 'bluetooth') ...[
+            OutlinedButton.icon(
+              onPressed: _loading ? null : _loadDevices,
+              icon: const Icon(Icons.bluetooth),
+              label: Text(_loading ? 'Recherche…' : 'Appareils appairés'),
             ),
+            for (final device in _devices)
+              ListTile(
+                dense: true,
+                selected: device.macAdress == _printer.address,
+                title: Text(device.name),
+                subtitle: Text(device.macAdress),
+                onTap: () => _pickDevice(device),
+              ),
+          ] else ...[
+            TextField(
+              controller: _host,
+              keyboardType: TextInputType.url,
+              decoration: const InputDecoration(labelText: 'Adresse IP', hintText: '192.168.1.40'),
+            ),
+            const SizedBox(height: 8),
+            TextField(
+              controller: _port,
+              keyboardType: TextInputType.number,
+              decoration: const InputDecoration(labelText: 'Port', hintText: '9100'),
+            ),
+          ],
+          const SizedBox(height: 12),
+          DropdownButtonFormField<String>(
+            initialValue: _brand,
+            decoration: const InputDecoration(labelText: 'Marque'),
+            items: [for (final brand in printerBrands) DropdownMenuItem(value: brand, child: Text(brand))],
+            onChanged: (brand) {
+              if (brand == null) return;
+              final models = printerPresets.where((preset) => preset.brand == brand).toList();
+              setState(() {
+                _brand = brand;
+                if (models.isNotEmpty) _printer.applyPreset(models.first);
+              });
+            },
+          ),
+          const SizedBox(height: 8),
+          DropdownButtonFormField<String>(
+            initialValue: _models.any((preset) => preset.id == _printer.presetId) ? _printer.presetId : _models.first.id,
+            decoration: const InputDecoration(labelText: 'Modèle'),
+            items: [for (final preset in _models) DropdownMenuItem(value: preset.id, child: Text(preset.model, overflow: TextOverflow.ellipsis))],
+            onChanged: (id) {
+              if (id != null) _applyModel(id);
+            },
+          ),
+          if (presetById(_printer.presetId).note.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(top: 6),
+              child: Text(presetById(_printer.presetId).note, style: const TextStyle(color: PosColors.muted, fontSize: 12)),
+            ),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              _paper(58),
+              const SizedBox(width: 8),
+              _paper(80),
+            ],
+          ),
+          const SizedBox(height: 8),
+          ExpansionTile(
+            tilePadding: EdgeInsets.zero,
+            title: const Text('Réglages avancés'),
+            children: [
+              _number('Caractères par ligne', _printer.columns, [32, 42, 48], (value) => _printer.columns = value),
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('Couper le papier'),
+                value: _printer.cut,
+                onChanged: (value) => setState(() {
+                  _printer.cut = value;
+                  if (!value) _printer.cutMode = 'none';
+                  if (value && _printer.cutMode == 'none') _printer.cutMode = 'feed';
+                }),
+              ),
+              if (_printer.cut)
+                DropdownButtonFormField<String>(
+                  initialValue: cutModes.containsKey(_printer.cutMode) ? _printer.cutMode : 'feed',
+                  decoration: const InputDecoration(labelText: 'Mode de coupe'),
+                  items: [for (final entry in cutModes.entries) DropdownMenuItem(value: entry.key, child: Text(entry.value))],
+                  onChanged: (value) => setState(() => _printer.cutMode = value ?? 'feed'),
+                ),
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('Ouvrir le tiroir'),
+                value: _printer.drawer,
+                onChanged: (value) => setState(() => _printer.drawer = value),
+              ),
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('Imprimer les accents'),
+                subtitle: const Text('Sinon é devient e'),
+                value: _printer.accents,
+                onChanged: (value) => setState(() => _printer.accents = value),
+              ),
+              if (_printer.accents)
+                DropdownButtonFormField<int>(
+                  initialValue: codePages.containsKey(_printer.codePage) ? _printer.codePage : 16,
+                  decoration: const InputDecoration(labelText: 'Page des accents'),
+                  items: [for (final entry in codePages.entries) DropdownMenuItem(value: entry.key, child: Text(entry.value))],
+                  onChanged: (value) => setState(() => _printer.codePage = value ?? 16),
+                ),
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('Code-barres du ticket'),
+                value: _printer.barcode,
+                onChanged: (value) => setState(() => _printer.barcode = value),
+              ),
+              _number('Copies', _printer.copies, [1, 2, 3], (value) => _printer.copies = value),
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('Imprimer après chaque vente'),
+                value: _printer.autoPrint,
+                onChanged: (value) => setState(() => _printer.autoPrint = value),
+              ),
+              if (_printer.connection == 'bluetooth')
+                SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: const Text('Garder la liaison'),
+                  value: _printer.keepAlive,
+                  onChanged: (value) => setState(() => _printer.keepAlive = value),
+                ),
+            ],
+          ),
+          if (_message != null) ...[
+            const SizedBox(height: 8),
+            Text(_message!, style: TextStyle(color: _error ? PosColors.danger : PosColors.ink)),
+          ],
+          const SizedBox(height: 12),
+          FilledButton(
+            onPressed: _save,
+            style: FilledButton.styleFrom(backgroundColor: const Color(0xFF111827), minimumSize: const Size.fromHeight(44)),
+            child: const Text('Enregistrer'),
           ),
         ],
       ),
     );
   }
 
-  Widget _tile(String title, String slot, String transport, String host, String width) {
-    final shown = transport == 'bluetooth' ? '${_settings['pos.${slot}_bt_address'] ?? '—'}' : host;
-    return Card(
-      child: ListTile(
-        title: Text(title),
-        subtitle: Text('$transport · $shown · ${width == '—' ? '80' : width} mm'),
-        trailing: const Icon(Icons.edit_outlined),
-        onTap: () => _editPrinter(slot, title),
+  Widget _mode(String label, String value) {
+    final selected = _printer.connection == value;
+    return Expanded(
+      child: Material(
+        color: selected ? const Color(0xFF111827) : Colors.white,
+        borderRadius: BorderRadius.circular(8),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(8),
+          onTap: () => setState(() {
+            _printer.connection = value;
+            if (value == 'bluetooth' && _devices.isEmpty) _loadDevices();
+          }),
+          child: Container(
+            height: 40,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: selected ? const Color(0xFF111827) : PosColors.line),
+            ),
+            child: Text(label, style: TextStyle(fontWeight: FontWeight.w700, color: selected ? Colors.white : PosColors.ink)),
+          ),
+        ),
       ),
+    );
+  }
+
+  Widget _paper(int width) {
+    final selected = _printer.paper == width;
+    return Expanded(
+      child: OutlinedButton(
+        onPressed: () => setState(() {
+          _printer.paper = width;
+          _printer.columns = width >= 80 ? 48 : 32;
+        }),
+        style: OutlinedButton.styleFrom(
+          backgroundColor: selected ? const Color(0xFF111827) : Colors.white,
+          foregroundColor: selected ? Colors.white : PosColors.ink,
+          minimumSize: const Size(0, 40),
+        ),
+        child: Text('$width mm'),
+      ),
+    );
+  }
+
+  Widget _number(String label, int current, List<int> values, ValueChanged<int> onChanged) {
+    final value = values.contains(current) ? current : values.first;
+    return DropdownButtonFormField<int>(
+      initialValue: value,
+      decoration: InputDecoration(labelText: label),
+      items: [for (final item in values) DropdownMenuItem(value: item, child: Text('$item'))],
+      onChanged: (next) {
+        if (next != null) setState(() => onChanged(next));
+      },
     );
   }
 }

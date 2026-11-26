@@ -5,6 +5,9 @@ import 'dart:typed_data';
 import 'package:print_bluetooth_thermal/print_bluetooth_thermal.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../printing/ticket_printer.dart';
+import '../printing/ticket_printer_store.dart';
+
 class PrinterConfig {
   PrinterConfig({
     required this.enabled,
@@ -126,11 +129,23 @@ class PrintService {
       'TOTAL: $total',
     ];
 
+    final local = await _localPrinters();
     final autoPrint = settings['pos.auto_print'] == true ||
         settings['pos.auto_print'] == 1 ||
         settings['pos.auto_print'] == '1' ||
         settings['pos.auto_print'] == 'true';
-    if (autoPrint) {
+    final localReceipt = local?['receipt'];
+    if (localReceipt != null) {
+      if (localReceipt.enabled && localReceipt.autoPrint) {
+        final receiptBytes = buildTicket(
+          title: businessName,
+          lines: receiptLines,
+          paperWidth: '${localReceipt.paper}',
+          footer: footer,
+        );
+        await _sendLocal(localReceipt, receiptBytes);
+      }
+    } else if (autoPrint) {
       final receipt = PrinterConfig.fromSettings(settings, 'receipt_printer');
       final receiptBytes = buildTicket(
         title: businessName,
@@ -155,6 +170,19 @@ class PrintService {
       slots.add('kitchen_printer_2');
     }
     for (final slot in slots) {
+      final role = slot == 'kitchen_printer_1' ? 'kitchen1' : 'kitchen2';
+      final localKitchen = local?[role];
+      if (local != null) {
+        if (localKitchen != null && localKitchen.enabled) {
+          final bytes = buildTicket(
+            title: localKitchen.deviceName.isEmpty ? 'Cuisine' : localKitchen.deviceName,
+            lines: kitchenLines,
+            paperWidth: '${localKitchen.paper}',
+          );
+          await _sendLocal(localKitchen, bytes);
+        }
+        continue;
+      }
       final printer = PrinterConfig.fromSettings(settings, slot);
       final bytes = buildTicket(
         title: printer.name.isEmpty ? 'Cuisine' : printer.name,
@@ -162,6 +190,25 @@ class PrintService {
         paperWidth: printer.paperWidth,
       );
       await send(printer, bytes);
+    }
+  }
+
+  Future<Map<String, TicketPrinter>?> _localPrinters() async {
+    try {
+      return await TicketPrinterStore().read();
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<void> _sendLocal(TicketPrinter printer, Uint8List bytes) async {
+    final copies = printer.copies.clamp(1, 3);
+    for (var copy = 0; copy < copies; copy++) {
+      if (printer.connection == 'bluetooth') {
+        await _sendBluetooth(printer.address, bytes, useOverride: false);
+      } else {
+        await _sendWifi(printer.host, printer.port, bytes);
+      }
     }
   }
 
@@ -178,9 +225,9 @@ class PrintService {
     }
   }
 
-  Future<void> _sendBluetooth(String address, Uint8List bytes) async {
+  Future<void> _sendBluetooth(String address, Uint8List bytes, {bool useOverride = true}) async {
     final prefs = await SharedPreferences.getInstance();
-    final override = prefs.getString('bt_override');
+    final override = useOverride ? prefs.getString('bt_override') : null;
     final target = (override != null && override.isNotEmpty) ? override : address;
     if (target.trim().isEmpty) {
       throw StateError('Adresse Bluetooth manquante');
