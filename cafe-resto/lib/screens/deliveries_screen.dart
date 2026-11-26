@@ -109,6 +109,23 @@ class _DeliveriesScreenState extends ConsumerState<DeliveriesScreen> {
       ),
     );
     if (ok != true) return;
+    final body = {
+      '_op': 'delivery_status',
+      '_delivery_id': delivery['id'],
+      'status': status,
+      if (note.trim().isNotEmpty) 'note': note.trim(),
+    };
+    final online = ref.read(onlineProvider).valueOrNull ?? false;
+    Future<void> park() async {
+      await ref.read(orderQueueProvider).enqueueOperation(const Uuid().v4(), body);
+      _patch(delivery, {'status': status, '_local': true});
+    }
+    if (!online) {
+      await park();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Statut en attente. Il partira au retour du réseau.')));
+      return;
+    }
     try {
       await ref.read(dioProvider).post('/api/v1/deliveries/${delivery['id']}/status', data: {
         'status': status,
@@ -117,6 +134,12 @@ class _DeliveriesScreenState extends ConsumerState<DeliveriesScreen> {
       await _load();
     } on DioException catch (error) {
       if (!mounted) return;
+      if (_network(error)) {
+        await park();
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Statut en attente. Il partira au retour du réseau.')));
+        return;
+      }
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(apiMessage(error))));
     }
   }

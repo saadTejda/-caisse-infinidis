@@ -403,10 +403,6 @@ class _PosScreenState extends ConsumerState<PosScreen> {
       return;
     }
     final online = ref.read(onlineProvider).valueOrNull ?? false;
-    if (!online && _orderType == 'delivery') {
-      setState(() => _error = 'La livraison nécessite le serveur. Choisissez sur place ou à emporter.');
-      return;
-    }
     if (!online && _salesBlocked) {
       setState(() => _error = 'Connectez-vous pour ouvrir la caisse. Hors ligne, seule une caisse déjà ouverte peut vendre.');
       return;

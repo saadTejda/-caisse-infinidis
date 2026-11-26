@@ -8,6 +8,7 @@ void main() {
     expect(queuePath('sale_update', orderId: 10), '/api/v1/orders/10/changes');
     expect(queuePath('sale_cancel', orderId: 10), '/api/v1/orders/10/cancel');
     expect(queuePath('delivery_assign', deliveryId: 4), '/api/v1/deliveries/4/assign');
+    expect(queuePath('delivery_status', deliveryId: 4), '/api/v1/deliveries/4/status');
     expect(queuePath('driver_payment', deliveryId: 4), '/api/v1/deliveries/4/driver-payment');
     final sent = stripPrivate({
       '_op': 'sale',

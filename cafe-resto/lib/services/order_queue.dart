@@ -15,6 +15,7 @@ String queuePath(String op, {Object? orderId, Object? deliveryId}) {
     'sale_update' => '/api/v1/orders/$orderId/changes',
     'sale_cancel' => '/api/v1/orders/$orderId/cancel',
     'delivery_assign' => '/api/v1/deliveries/$deliveryId/assign',
+    'delivery_status' => '/api/v1/deliveries/$deliveryId/status',
     'driver_payment' => '/api/v1/deliveries/$deliveryId/driver-payment',
     _ => '/api/v1/orders',
   };
