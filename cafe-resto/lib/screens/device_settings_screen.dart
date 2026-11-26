@@ -44,6 +44,14 @@ class _DeviceSettingsScreenState extends ConsumerState<DeviceSettingsScreen> {
     });
   }
 
+  Widget _linkLine() {
+    final service = ref.watch(printServiceProvider);
+    return ValueListenableBuilder<PrinterLink>(
+      valueListenable: service.link,
+      builder: (context, value, _) => Text(printerLinkLabel(value), style: const TextStyle(fontWeight: FontWeight.w700)),
+    );
+  }
+
   Future<void> _open(String role) async {
     final current = _printers[role] ?? TicketPrinter.fromPreset(presetById('generic_80'), role: role);
     final edited = await Navigator.of(context).push<TicketPrinter>(
@@ -53,6 +61,7 @@ class _DeviceSettingsScreenState extends ConsumerState<DeviceSettingsScreen> {
     final next = Map<String, TicketPrinter>.from(_printers);
     next[role] = edited;
     await _store.write(next);
+    await ref.read(printServiceProvider).startWatch();
     if (!mounted) return;
     setState(() {
       _printers = next;
@@ -71,6 +80,8 @@ class _DeviceSettingsScreenState extends ConsumerState<DeviceSettingsScreen> {
             'Chaque tablette garde ses propres imprimantes. Choisissez l’appareil, le modèle se règle tout seul.',
             style: TextStyle(color: PosColors.muted),
           ),
+          const SizedBox(height: 8),
+          _linkLine(),
           if (_message != null) ...[
             const SizedBox(height: 8),
             Text(_message!, style: const TextStyle(color: PosColors.success)),

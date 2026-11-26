@@ -1,7 +1,9 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:flutter/widgets.dart';
 import 'package:print_bluetooth_thermal/print_bluetooth_thermal.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -50,7 +52,30 @@ class PrinterConfig {
   }
 }
 
-class PrintService {
+enum PrinterLink { none, connecting, connected, offline }
+
+String printerLinkLabel(PrinterLink value) {
+  switch (value) {
+    case PrinterLink.none:
+      return 'Aucune imprimante';
+    case PrinterLink.connecting:
+      return 'Connexion…';
+    case PrinterLink.connected:
+      return 'Connectée';
+    case PrinterLink.offline:
+      return 'Hors ligne. Allumez l’imprimante et vérifiez l’appairage.';
+  }
+}
+
+class PrintService with WidgetsBindingObserver {
+  final link = ValueNotifier<PrinterLink>(PrinterLink.none);
+  Timer? _watch;
+  String? _linkedAddress;
+  bool _observing = false;
+  bool _connecting = false;
+  bool _sending = false;
+  TicketPrinter? _watched;
+
   /// Builds simple ESC/POS bytes (generic profile).
   Uint8List buildTicket({
     required String title,
@@ -138,7 +163,7 @@ class PrintService {
     final localReceipt = local?['receipt'];
     if (localReceipt != null) {
       if (localReceipt.enabled && localReceipt.autoPrint) {
-        await _sendLocal(localReceipt, _localTicket(localReceipt, title: businessName, lines: receiptLines, footer: footer, reference: publicRef));
+        await _sendQuiet(() => _sendLocal(localReceipt, _localTicket(localReceipt, title: businessName, lines: receiptLines, footer: footer, reference: publicRef)));
       }
     } else if (autoPrint) {
       final receipt = PrinterConfig.fromSettings(settings, 'receipt_printer');
@@ -148,7 +173,7 @@ class PrintService {
         paperWidth: receipt.paperWidth,
         footer: footer,
       );
-      await send(receipt, receiptBytes);
+      await _sendQuiet(() => send(receipt, receiptBytes));
     }
 
     final kitchenLines = <String>[
@@ -169,12 +194,14 @@ class PrintService {
       final localKitchen = local?[role];
       if (local != null) {
         if (localKitchen != null && localKitchen.enabled) {
-          await _sendLocal(
-            localKitchen,
-            _localTicket(
+          await _sendQuiet(
+            () => _sendLocal(
               localKitchen,
-              title: localKitchen.deviceName.isEmpty ? 'Cuisine' : localKitchen.deviceName,
-              lines: kitchenLines,
+              _localTicket(
+                localKitchen,
+                title: localKitchen.deviceName.isEmpty ? 'Cuisine' : localKitchen.deviceName,
+                lines: kitchenLines,
+              ),
             ),
           );
         }
@@ -186,7 +213,7 @@ class PrintService {
         lines: kitchenLines,
         paperWidth: printer.paperWidth,
       );
-      await send(printer, bytes);
+      await _sendQuiet(() => send(printer, bytes));
     }
   }
 
@@ -250,9 +277,12 @@ class PrintService {
       } else {
         await _sendWifi(printer.host, printer.port, Uint8List.fromList(ticket.bytes));
       }
+      link.value = PrinterLink.connected;
     } on SocketException {
+      link.value = PrinterLink.offline;
       throw PrintFailure('Imprimante injoignable. Allumez-la, rapprochez-la, et vérifiez l’adresse ou l’appairage.');
     } catch (error) {
+      link.value = PrinterLink.offline;
       final message = '$error';
       if (message.contains('Bluetooth') || message.contains('IP')) {
         throw PrintFailure('Imprimante injoignable. Allumez-la, rapprochez-la, et vérifiez l’adresse ou l’appairage.');
@@ -302,6 +332,96 @@ class PrintService {
     final written = await PrintBluetoothThermal.writeBytes(bytes);
     if (!written) {
       throw StateError('Écriture Bluetooth échouée');
+    }
+  }
+
+  Future<void> startWatch() async {
+    _watch?.cancel();
+    if (!_observing) {
+      WidgetsBinding.instance.addObserver(this);
+      _observing = true;
+    }
+    final local = await _localPrinters();
+    _watched = _primary(local);
+    final printer = _watched;
+    if (printer == null || !printer.enabled || !printer.ready) {
+      link.value = PrinterLink.none;
+      return;
+    }
+    if (printer.connection == 'network') {
+      link.value = PrinterLink.connected;
+      return;
+    }
+    if (!printer.keepAlive) {
+      link.value = PrinterLink.offline;
+      return;
+    }
+    _watch = Timer.periodic(const Duration(seconds: 15), (_) => check());
+    await check();
+  }
+
+  TicketPrinter? _primary(Map<String, TicketPrinter>? local) {
+    if (local == null) return null;
+    for (final role in const ['receipt', 'kitchen1', 'kitchen2']) {
+      final printer = local[role];
+      if (printer != null && printer.enabled && printer.ready && printer.connection == 'bluetooth') return printer;
+    }
+    for (final role in const ['receipt', 'kitchen1', 'kitchen2']) {
+      final printer = local[role];
+      if (printer != null && printer.enabled && printer.ready) return printer;
+    }
+    return null;
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) check();
+  }
+
+  Future<void> check() async {
+    final printer = _watched;
+    if (printer == null || !printer.keepAlive || printer.connection != 'bluetooth' || _connecting || _sending) return;
+    try {
+      if (!await PrintBluetoothThermal.bluetoothEnabled) {
+        link.value = PrinterLink.offline;
+        return;
+      }
+      if (await PrintBluetoothThermal.connectionStatus && _linkedAddress == printer.address) {
+        link.value = PrinterLink.connected;
+        return;
+      }
+      await _connectQuiet(printer.address);
+    } catch (_) {
+      link.value = PrinterLink.offline;
+    }
+  }
+
+  Future<void> _connectQuiet(String address) async {
+    _connecting = true;
+    link.value = PrinterLink.connecting;
+    try {
+      if (await PrintBluetoothThermal.connectionStatus) {
+        await PrintBluetoothThermal.disconnect;
+      }
+      final ok = await PrintBluetoothThermal.connect(macPrinterAddress: address);
+      _linkedAddress = ok ? address : null;
+      link.value = ok ? PrinterLink.connected : PrinterLink.offline;
+    } catch (_) {
+      link.value = PrinterLink.offline;
+    } finally {
+      _connecting = false;
+    }
+  }
+
+  Future<void> _sendQuiet(Future<void> Function() job) async {
+    _sending = true;
+    try {
+      await job();
+      if (link.value != PrinterLink.none) link.value = PrinterLink.connected;
+    } catch (_) {
+      if (link.value != PrinterLink.none) link.value = PrinterLink.offline;
+    } finally {
+      _sending = false;
     }
   }
 

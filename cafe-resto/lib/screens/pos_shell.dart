@@ -6,6 +6,7 @@ import '../api/api_error.dart';
 import '../auth/staff_user.dart';
 import '../l10n/caisse_text.dart';
 import '../providers/app_providers.dart';
+import '../services/print_service.dart';
 import '../theme/pos_theme.dart';
 import 'business_settings_screen.dart';
 import 'cash_screen.dart';
@@ -43,6 +44,7 @@ class _PosShellState extends ConsumerState<PosShell> {
       final cached = await ref.read(syncServiceProvider).user();
       if (cached.isNotEmpty) user = StaffUser.fromJson(cached);
     }
+    ref.read(printServiceProvider).startWatch();
     if (user.permissions.isEmpty && user.roles.isEmpty) {
       try {
         final me = await ref.read(dioProvider).get('/api/v1/auth/me');
@@ -167,9 +169,37 @@ class _PosShellState extends ConsumerState<PosShell> {
             ],
           ),
           const VerticalDivider(width: 1),
-          Expanded(child: _module == 'pos' ? _body(modules) : SafeArea(child: _body(modules))),
+          Expanded(
+            child: Column(
+              children: [
+                _printerStatus(),
+                Expanded(child: _module == 'pos' ? _body(modules) : SafeArea(child: _body(modules))),
+              ],
+            ),
+          ),
         ],
       ),
+    );
+  }
+
+  Widget _printerStatus() {
+    final service = ref.watch(printServiceProvider);
+    return ValueListenableBuilder<PrinterLink>(
+      valueListenable: service.link,
+      builder: (context, value, _) {
+        if (value == PrinterLink.none) return const SizedBox.shrink();
+        final color = value == PrinterLink.connected
+            ? PosColors.success
+            : value == PrinterLink.connecting
+                ? PosColors.accent
+                : PosColors.danger;
+        return Container(
+          width: double.infinity,
+          color: color.withValues(alpha: 0.12),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+          child: Text(printerLinkLabel(value), style: TextStyle(color: color, fontSize: 12, fontWeight: FontWeight.w700)),
+        );
+      },
     );
   }
 
