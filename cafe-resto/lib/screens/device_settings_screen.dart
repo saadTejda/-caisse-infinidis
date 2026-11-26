@@ -5,6 +5,7 @@ import 'package:print_bluetooth_thermal/print_bluetooth_thermal.dart';
 import '../printing/ticket_printer.dart';
 import '../printing/ticket_printer_store.dart';
 import '../providers/app_providers.dart';
+import '../services/print_service.dart';
 import '../theme/pos_theme.dart';
 
 const _roleLabels = {
@@ -112,8 +113,12 @@ class _PrinterEditorState extends State<_PrinterEditor> {
   final _port = TextEditingController();
   List<BluetoothInfo> _devices = [];
   bool _loading = false;
+  bool _testing = false;
+  bool _asked = false;
   String? _message;
   bool _error = false;
+  static const _pages = [16, 2, 19, 0];
+  static const _cuts = ['feed', 'full', 'partial'];
 
   @override
   void initState() {
@@ -175,6 +180,83 @@ class _PrinterEditorState extends State<_PrinterEditor> {
   void _applyModel(String id) {
     final preset = presetById(id);
     setState(() => _printer.applyPreset(preset));
+  }
+
+  Future<void> _test({String? note}) async {
+    _printer.host = _host.text.trim();
+    _printer.port = int.tryParse(_port.text.trim()) ?? 9100;
+    setState(() => _testing = true);
+    try {
+      await PrintService().printTest(_printer);
+      if (!mounted) return;
+      setState(() => _asked = true);
+      _say('${note == null ? '' : '$note\n'}Ticket test imprimé. Regardez-le et répondez ci-dessous.');
+    } catch (error) {
+      _say('$error', error: true);
+    } finally {
+      if (mounted) setState(() => _testing = false);
+    }
+  }
+
+  void _fixAccents() {
+    String note;
+    if (!_printer.accents) {
+      _printer.accents = true;
+      _printer.codePage = _pages.first;
+      note = 'Nouvel essai des accents.';
+    } else {
+      final index = _pages.indexOf(_printer.codePage);
+      if (index + 1 < _pages.length) {
+        _printer.codePage = _pages[index + 1];
+        note = 'Autre page d’accents : ${codePages[_printer.codePage]}.';
+      } else {
+        _printer.accents = false;
+        note = 'Accents retirés : é devient e. Le ticket reste lisible.';
+      }
+    }
+    setState(() {});
+    _test(note: note);
+  }
+
+  void _fixCut() {
+    String note;
+    if (!_printer.cut) {
+      _printer.cut = true;
+      _printer.cutMode = _cuts.first;
+      note = 'Coupe activée : ${cutModes[_printer.cutMode]}.';
+    } else {
+      final index = _cuts.indexOf(_printer.cutMode);
+      if (index + 1 < _cuts.length) {
+        _printer.cutMode = _cuts[index + 1];
+        note = 'Autre façon de couper : ${cutModes[_printer.cutMode]}.';
+      } else {
+        _printer.cut = false;
+        _printer.cutMode = 'none';
+        note = 'Cette imprimante ne coupe pas. Déchirez le ticket.';
+      }
+    }
+    setState(() {});
+    _test(note: note);
+  }
+
+  void _fixWidth({required bool tooWide}) {
+    const steps = [32, 42, 48];
+    final index = steps.indexOf(_printer.columns);
+    if (tooWide) {
+      if (_printer.paper >= 80 && index > 0) {
+        _printer.columns = steps[index - 1];
+      } else {
+        _printer.paper = 58;
+        _printer.columns = 32;
+      }
+    } else if (_printer.paper < 80) {
+      _printer.paper = 80;
+      _printer.columns = 42;
+    } else {
+      _printer.columns = index >= 0 && index + 1 < steps.length ? steps[index + 1] : 48;
+    }
+    setState(() {});
+    _test(note: 'Largeur réglée : ${_printer.paper} mm, ${_printer.columns} caractères par ligne.');
   }
 
   void _save() {
@@ -346,6 +428,33 @@ class _PrinterEditorState extends State<_PrinterEditor> {
             Text(_message!, style: TextStyle(color: _error ? PosColors.danger : PosColors.ink)),
           ],
           const SizedBox(height: 12),
+          OutlinedButton.icon(
+            onPressed: _testing ? null : _test,
+            icon: const Icon(Icons.print_outlined),
+            label: Text(_testing ? 'Impression…' : 'Imprimer un test'),
+          ),
+          if (_asked) ...[
+            const SizedBox(height: 10),
+            const Text('Le ticket test est-il correct ?', style: TextStyle(fontWeight: FontWeight.w800)),
+            const SizedBox(height: 4),
+            const Text('Chaque bouton corrige et réimprime.', style: TextStyle(color: PosColors.muted, fontSize: 12)),
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                _fix('Accents illisibles', _fixAccents),
+                _fix('La coupe ne part pas', _fixCut),
+                _fix('Le texte dépasse', () => _fixWidth(tooWide: true)),
+                _fix('Le texte est trop étroit', () => _fixWidth(tooWide: false)),
+                _fix('Le code-barres est illisible', () {
+                  setState(() => _printer.barcode = false);
+                  _test(note: 'Le numéro est imprimé en texte, sans code-barres.');
+                }),
+              ],
+            ),
+          ],
+          const SizedBox(height: 12),
           FilledButton(
             onPressed: _save,
             style: FilledButton.styleFrom(backgroundColor: const Color(0xFF111827), minimumSize: const Size.fromHeight(44)),
@@ -353,6 +462,13 @@ class _PrinterEditorState extends State<_PrinterEditor> {
           ),
         ],
       ),
+    );
+  }
+
+  Widget _fix(String label, VoidCallback onTap) {
+    return OutlinedButton(
+      onPressed: _testing ? null : onTap,
+      child: Text(label),
     );
   }
 

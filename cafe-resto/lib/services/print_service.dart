@@ -5,6 +5,7 @@ import 'dart:typed_data';
 import 'package:print_bluetooth_thermal/print_bluetooth_thermal.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../printing/ticket_builder.dart';
 import '../printing/ticket_printer.dart';
 import '../printing/ticket_printer_store.dart';
 
@@ -137,13 +138,7 @@ class PrintService {
     final localReceipt = local?['receipt'];
     if (localReceipt != null) {
       if (localReceipt.enabled && localReceipt.autoPrint) {
-        final receiptBytes = buildTicket(
-          title: businessName,
-          lines: receiptLines,
-          paperWidth: '${localReceipt.paper}',
-          footer: footer,
-        );
-        await _sendLocal(localReceipt, receiptBytes);
+        await _sendLocal(localReceipt, _localTicket(localReceipt, title: businessName, lines: receiptLines, footer: footer, reference: publicRef));
       }
     } else if (autoPrint) {
       final receipt = PrinterConfig.fromSettings(settings, 'receipt_printer');
@@ -174,12 +169,14 @@ class PrintService {
       final localKitchen = local?[role];
       if (local != null) {
         if (localKitchen != null && localKitchen.enabled) {
-          final bytes = buildTicket(
-            title: localKitchen.deviceName.isEmpty ? 'Cuisine' : localKitchen.deviceName,
-            lines: kitchenLines,
-            paperWidth: '${localKitchen.paper}',
+          await _sendLocal(
+            localKitchen,
+            _localTicket(
+              localKitchen,
+              title: localKitchen.deviceName.isEmpty ? 'Cuisine' : localKitchen.deviceName,
+              lines: kitchenLines,
+            ),
           );
-          await _sendLocal(localKitchen, bytes);
         }
         continue;
       }
@@ -198,6 +195,69 @@ class PrintService {
       return await TicketPrinterStore().read();
     } catch (_) {
       return null;
+    }
+  }
+
+  Uint8List _localTicket(
+    TicketPrinter printer, {
+    required String title,
+    required List<String> lines,
+    String? footer,
+    String? reference,
+  }) {
+    final ticket = TicketBuilder(printer)..init();
+    ticket.text(title, alignTo: 'center', strong: true);
+    ticket.hr();
+    for (final line in lines) {
+      ticket.wrap(line);
+    }
+    if (reference != null && printer.barcode) {
+      ticket.barcode(reference);
+    }
+    ticket.hr();
+    if (footer != null && footer.trim().isNotEmpty) ticket.text(footer.trim(), alignTo: 'center');
+    ticket.feed(3);
+    if (printer.cut) ticket.cut();
+    return Uint8List.fromList(ticket.bytes);
+  }
+
+  Future<void> printTest(TicketPrinter printer) async {
+    if (printer.connection == 'network' && printer.host.trim().isEmpty) {
+      throw PrintFailure('Saisissez l’adresse IP de l’imprimante.');
+    }
+    if (printer.connection == 'bluetooth' && printer.address.trim().isEmpty) {
+      throw PrintFailure('Choisissez d’abord l’imprimante Bluetooth.');
+    }
+    final ticket = TicketBuilder(printer)..init();
+    ticket.text('Café Resto', alignTo: 'center', strong: true);
+    ticket.text('Ticket test', alignTo: 'center');
+    ticket.hr();
+    ticket.wrap(presetById(printer.presetId).label);
+    ticket.pair('Papier', '${printer.paper} mm');
+    ticket.pair('Caractères / ligne', '${printer.columns}');
+    ticket.hr();
+    ticket.text('1. Accents : é è ê à â ç ô û É À Ç');
+    ticket.text('2. Cette ligne doit tenir sur une seule ligne :');
+    ticket.text(List.generate(printer.columns, (index) => '${(index + 1) % 10}').join());
+    ticket.text('3. Code-barres :');
+    ticket.barcode('TEST-123456');
+    ticket.pair('4. Total', '123,45', strong: true);
+    ticket.feed(3);
+    if (printer.cut) ticket.cut();
+    try {
+      if (printer.connection == 'bluetooth') {
+        await _sendBluetooth(printer.address, Uint8List.fromList(ticket.bytes), useOverride: false);
+      } else {
+        await _sendWifi(printer.host, printer.port, Uint8List.fromList(ticket.bytes));
+      }
+    } on SocketException {
+      throw PrintFailure('Imprimante injoignable. Allumez-la, rapprochez-la, et vérifiez l’adresse ou l’appairage.');
+    } catch (error) {
+      final message = '$error';
+      if (message.contains('Bluetooth') || message.contains('IP')) {
+        throw PrintFailure('Imprimante injoignable. Allumez-la, rapprochez-la, et vérifiez l’adresse ou l’appairage.');
+      }
+      rethrow;
     }
   }
 
@@ -251,4 +311,13 @@ class PrintService {
     }
     return '${input.substring(0, cols - 1)}…';
   }
+}
+
+class PrintFailure implements Exception {
+  PrintFailure(this.message);
+
+  final String message;
+
+  @override
+  String toString() => message;
 }
