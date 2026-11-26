@@ -113,17 +113,48 @@ class _CashScreenState extends ConsumerState<CashScreen> {
     return sum;
   }
 
+  bool _offlineError(DioException error) {
+    return error.type == DioExceptionType.connectionTimeout ||
+        error.type == DioExceptionType.receiveTimeout ||
+        error.type == DioExceptionType.connectionError ||
+        error.type == DioExceptionType.unknown;
+  }
+
+  Future<Map<String, dynamic>?> _cachedSession() async {
+    final store = ref.read(localStoreProvider);
+    final cached = await loadList(store, 'cash_session');
+    if (cached.isNotEmpty) return cached.first;
+    try {
+      final status = await ref.read(syncServiceProvider).cashStatus();
+      if (status.isEmpty) return null;
+      return {
+        'id': status['session_id'],
+        'status': status['session_open'] == true ? 'open' : 'closed',
+        if (status['totals'] is Map) 'totals': Map<String, dynamic>.from(status['totals'] as Map),
+      };
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<void> _showCached({String? error}) async {
+    final session = await _cachedSession();
+    final history = await loadList(ref.read(localStoreProvider), 'cash_history');
+    if (!mounted) return;
+    setState(() {
+      _session = session;
+      _history = history;
+      _fromCache = session != null;
+      _error = session == null ? (error ?? 'Pas encore synchronisé. Les totaux locaux restent visibles.') : null;
+      _busy = false;
+    });
+  }
+
   Future<void> _load() async {
     await _readPending();
-    final online = ref.read(onlineProvider).valueOrNull ?? true;
-    if (!online) {
-      final cached = await loadList(ref.read(localStoreProvider), 'cash_session');
-      setState(() {
-        _session = cached.isEmpty ? null : cached.first;
-        _fromCache = _session != null;
-        _error = _session == null ? 'Pas encore synchronisé. Les totaux locaux restent visibles.' : null;
-        _busy = false;
-      });
+    final online = ref.read(onlineProvider).valueOrNull;
+    if (online == false) {
+      await _showCached();
       return;
     }
     setState(() {
@@ -133,23 +164,34 @@ class _CashScreenState extends ConsumerState<CashScreen> {
     Map<String, dynamic>? session;
     var history = <Map<String, dynamic>>[];
     String? error;
+    var networkDown = false;
     final dio = ref.read(dioProvider);
     try {
       final response = await dio.get('/api/v1/cash/session');
       final raw = response.data is Map ? response.data['data'] : null;
       session = raw is Map ? Map<String, dynamic>.from(raw) : null;
     } on DioException catch (e) {
+      networkDown = _offlineError(e);
       if (e.response?.statusCode != 404) error = apiMessage(e, fallback: 'Impossible de lire le tiroir.');
     }
-    try {
-      final response = await dio.get('/api/v1/cash/sessions');
-      history = apiList(response.data);
-    } on DioException catch (e) {
-      error ??= apiMessage(e, fallback: 'Impossible de lire le tiroir.');
+    if (!networkDown) {
+      try {
+        final response = await dio.get('/api/v1/cash/sessions');
+        history = apiList(response.data);
+      } on DioException catch (e) {
+        networkDown = _offlineError(e);
+        error ??= apiMessage(e, fallback: 'Impossible de lire le tiroir.');
+      }
     }
+    if (networkDown) {
+      await _showCached(error: error);
+      return;
+    }
+    final store = ref.read(localStoreProvider);
     if (session != null) {
-      await saveList(ref.read(localStoreProvider), 'cash_session', [session]);
+      await saveList(store, 'cash_session', [session]);
     }
+    await saveList(store, 'cash_history', history);
     if (mounted) {
       setState(() {
         _session = session;

@@ -233,83 +233,101 @@ class _CatalogScreenState extends ConsumerState<CatalogScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final products = _products.where((product) {
+      final query = _query.toLowerCase();
+      if (query.isEmpty) return true;
+      return ['name', 'sku', 'barcode', 'code'].any((key) => '${product[key] ?? ''}'.toLowerCase().contains(query));
+    }).toList();
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
         if (_error != null) Text(_error!, style: const TextStyle(color: PosColors.danger)),
         if (_busy) const LinearProgressIndicator(),
-        Row(
+        const Text('Catégories', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 18)),
+        const SizedBox(height: 8),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
           children: [
-            const Text('Catégories', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 18)),
-            const Spacer(),
-            TextButton(onPressed: () => _saveCategory(), child: const Text('Ajouter')),
+            for (final category in _categories)
+              InputChip(
+                label: Text('${category['name']}'),
+                avatar: Icon(Icons.circle, size: 10, color: category['is_active'] == false ? PosColors.muted : PosColors.success),
+                onPressed: () => _saveCategory(category),
+                onDeleted: () => _deleteCategory(category),
+              ),
+            ActionChip(avatar: const Icon(Icons.add, size: 18), label: const Text('Catégorie'), onPressed: () => _saveCategory()),
           ],
         ),
-        for (final category in _categories)
-          ListTile(
-            title: Text('${category['name']}'),
-            trailing: IconButton(icon: const Icon(Icons.delete_outline), onPressed: () => _deleteCategory(category)),
-            onTap: () => _saveCategory(category),
-          ),
+        const SizedBox(height: 16),
         Row(
           children: [
             const Text('Produits', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 18)),
             const Spacer(),
-            TextButton(onPressed: () => _saveProduct(), child: const Text('Ajouter')),
+            FilledButton.icon(onPressed: () => _saveProduct(), icon: const Icon(Icons.add), label: const Text('Produit')),
           ],
         ),
-        ListTile(
-          leading: const Icon(Icons.search),
-          title: Text(_query.isEmpty ? 'Nom, SKU, code-barres' : _query),
-          onTap: () async {
-            final value = await showDialog<String>(
-              context: context,
-              builder: (context) {
-                final field = TextEditingController(text: _query);
-                return AlertDialog(
-                  title: const Text('Rechercher un produit'),
-                  content: TextField(controller: field, decoration: const InputDecoration(hintText: 'Nom, SKU, code-barres')),
-                  actions: [
-                    TextButton(onPressed: () => Navigator.pop(context, ''), child: const Text('Effacer')),
-                    FilledButton(onPressed: () => Navigator.pop(context, field.text), child: const Text('Chercher')),
-                  ],
-                );
-              },
-            );
-            if (value == null || !mounted) return;
-            setState(() => _query = value.trim());
-          },
+        const SizedBox(height: 8),
+        TextField(
+          decoration: const InputDecoration(
+            hintText: 'Nom, SKU, code-barres',
+            prefixIcon: Icon(Icons.search),
+          ),
+          onChanged: (value) => setState(() => _query = value.trim()),
         ),
-        for (final product in _products.where((product) {
-          final query = _query.toLowerCase();
-          if (query.isEmpty) return true;
-          return ['name', 'sku', 'barcode', 'code'].any((key) => '${product[key] ?? ''}'.toLowerCase().contains(query));
-        }))
-          ListTile(
-            title: Text('${product['name']}'),
-            subtitle: Text('${product['type']} · ${product['unit']} · ${product['sale_price'] ?? '—'}'),
-            trailing: Wrap(
-              spacing: 0,
+        const SizedBox(height: 12),
+        if (products.isEmpty)
+          const Text('Aucun produit', style: TextStyle(color: PosColors.muted)),
+        for (final product in products) _productRow(product),
+      ],
+    );
+  }
+
+  Widget _productRow(Map<String, dynamic> product) {
+    final price = product['sale_price'];
+    final stock = product['stock_quantity'] ?? product['stock'];
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Material(
+      color: Colors.white,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(14),
+        side: const BorderSide(color: PosColors.line),
+      ),
+      child: ListTile(
+        onTap: () => _saveProduct(product),
+        title: Text('${product['name']}', style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 16)),
+        subtitle: Text('${product['type']} · ${product['unit']}'),
+        trailing: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              crossAxisAlignment: CrossAxisAlignment.end,
               children: [
-                IconButton(icon: const Icon(Icons.inventory_2_outlined), onPressed: () => _stock(product)),
-                IconButton(icon: const Icon(Icons.history), onPressed: () => _movements(product)),
-                IconButton(icon: const Icon(Icons.image_outlined), onPressed: () => _image(product)),
-                IconButton(
-                  icon: const Icon(Icons.delete_outline),
-                  onPressed: () async {
-                    try {
-                      await ref.read(dioProvider).delete('/api/v1/products/${product['id']}');
-                      await _load();
-                    } on DioException catch (error) {
-                      _toast(apiMessage(error));
-                    }
-                  },
-                ),
+                Text('${price ?? '—'} DH', style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 16)),
+                if (stock != null) Text('Stock $stock', style: const TextStyle(color: PosColors.muted, fontSize: 12)),
               ],
             ),
-            onTap: () => _saveProduct(product),
-          ),
-      ],
+            IconButton(tooltip: 'Stock', icon: const Icon(Icons.inventory_2_outlined), onPressed: () => _stock(product)),
+            IconButton(tooltip: 'Mouvements', icon: const Icon(Icons.history), onPressed: () => _movements(product)),
+            IconButton(tooltip: 'Image', icon: const Icon(Icons.image_outlined), onPressed: () => _image(product)),
+            IconButton(
+              tooltip: 'Supprimer',
+              icon: const Icon(Icons.delete_outline),
+              onPressed: () async {
+                try {
+                  await ref.read(dioProvider).delete('/api/v1/products/${product['id']}');
+                  await _load();
+                } on DioException catch (error) {
+                  _toast(apiMessage(error));
+                }
+              },
+            ),
+          ],
+        ),
+      ),
+      ),
     );
   }
 }
@@ -553,48 +571,83 @@ class _ProductEditorState extends State<_ProductEditor> {
 
   @override
   Widget build(BuildContext context) {
-    return AlertDialog(
-      title: Text(widget.product == null ? 'Produit' : '${widget.product!['name']}'),
-      content: SizedBox(
-        width: 520,
-        child: SingleChildScrollView(
-          child: Column(
-            children: [
-              TextField(controller: _name, decoration: const InputDecoration(labelText: 'Nom')),
-              DropdownButtonFormField<String>(
-                initialValue: _type,
-                items: const [
-                  DropdownMenuItem(value: 'sellable', child: Text('Vendable')),
-                  DropdownMenuItem(value: 'ingredient', child: Text('Ingrédient')),
-                  DropdownMenuItem(value: 'both', child: Text('Les deux')),
+    InputDecoration field(String label) => InputDecoration(labelText: label, floatingLabelBehavior: FloatingLabelBehavior.always);
+    return Dialog(
+      insetPadding: const EdgeInsets.all(24),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 760, maxHeight: 720),
+        child: Column(
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 16, 12, 8),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(widget.product == null ? 'Nouveau produit' : '${widget.product!['name']}', style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w800)),
+                  ),
+                  IconButton(onPressed: () => Navigator.pop(context), icon: const Icon(Icons.close)),
                 ],
-                onChanged: (value) => setState(() => _type = value ?? _type),
               ),
-              DropdownButtonFormField<String>(
-                initialValue: _unit,
-                items: const ['piece', 'g', 'kg', 'ml', 'l']
-                    .map((unit) => DropdownMenuItem(value: unit, child: Text(unit)))
-                    .toList(),
-                onChanged: (value) => setState(() => _unit = value ?? _unit),
-              ),
-              DropdownButtonFormField<int?>(
-                initialValue: _categoryId,
-                items: [
-                  const DropdownMenuItem(value: null, child: Text('Sans catégorie')),
-                  for (final category in widget.categories)
-                    DropdownMenuItem(value: int.tryParse('${category['id']}'), child: Text('${category['name']}')),
-                ],
-                onChanged: (value) => setState(() => _categoryId = value),
-              ),
-              TextField(controller: _sale, decoration: const InputDecoration(labelText: 'Prix de vente')),
-              TextField(controller: _cost, decoration: const InputDecoration(labelText: 'Coût')),
-              TextField(controller: _position, decoration: const InputDecoration(labelText: 'Position caisse')),
-              SwitchListTile(value: _track, title: const Text('Suivre le stock'), onChanged: (value) => setState(() => _track = value)),
-              TextField(controller: _minStock, decoration: const InputDecoration(labelText: 'Stock minimum')),
-              if (widget.product == null)
-                TextField(controller: _initial, decoration: const InputDecoration(labelText: 'Stock initial')),
-              SwitchListTile(value: _active, title: const Text('Actif'), onChanged: (value) => setState(() => _active = value)),
-              SwitchListTile(value: _recipe, title: const Text('Recette'), onChanged: (value) => setState(() => _recipe = value)),
+            ),
+            const Divider(height: 1),
+            Expanded(
+              child: ListView(
+                padding: const EdgeInsets.all(20),
+                children: [
+                  const Text('Identité', style: TextStyle(fontWeight: FontWeight.w800)),
+                  const SizedBox(height: 8),
+                  TextField(controller: _name, decoration: field('Nom')),
+                  const SizedBox(height: 12),
+                  DropdownButtonFormField<String>(
+                    initialValue: _type,
+                    decoration: field('Type'),
+                    items: const [
+                      DropdownMenuItem(value: 'sellable', child: Text('Vendable')),
+                      DropdownMenuItem(value: 'ingredient', child: Text('Ingrédient')),
+                      DropdownMenuItem(value: 'both', child: Text('Les deux')),
+                    ],
+                    onChanged: (value) => setState(() => _type = value ?? _type),
+                  ),
+                  const SizedBox(height: 12),
+                  DropdownButtonFormField<String>(
+                    initialValue: _unit,
+                    decoration: field('Unité'),
+                    items: const ['piece', 'g', 'kg', 'ml', 'l'].map((unit) => DropdownMenuItem(value: unit, child: Text(unit))).toList(),
+                    onChanged: (value) => setState(() => _unit = value ?? _unit),
+                  ),
+                  const SizedBox(height: 12),
+                  DropdownButtonFormField<int?>(
+                    initialValue: _categoryId,
+                    decoration: field('Catégorie'),
+                    items: [
+                      const DropdownMenuItem(value: null, child: Text('Sans catégorie')),
+                      for (final category in widget.categories)
+                        DropdownMenuItem(value: int.tryParse('${category['id']}'), child: Text('${category['name']}')),
+                    ],
+                    onChanged: (value) => setState(() => _categoryId = value),
+                  ),
+                  const SizedBox(height: 18),
+                  const Text('Prix', style: TextStyle(fontWeight: FontWeight.w800)),
+                  const SizedBox(height: 8),
+                  Row(
+                    children: [
+                      Expanded(child: TextField(controller: _sale, keyboardType: TextInputType.number, decoration: field('Prix de vente'))),
+                      const SizedBox(width: 12),
+                      Expanded(child: TextField(controller: _cost, keyboardType: TextInputType.number, decoration: field('Coût'))),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(controller: _position, keyboardType: TextInputType.number, decoration: field('Position caisse')),
+                  const SizedBox(height: 18),
+                  const Text('Stock', style: TextStyle(fontWeight: FontWeight.w800)),
+                  SwitchListTile(contentPadding: EdgeInsets.zero, value: _track, title: const Text('Suivre le stock'), onChanged: (value) => setState(() => _track = value)),
+                  TextField(controller: _minStock, keyboardType: TextInputType.number, decoration: field('Stock minimum')),
+                  if (widget.product == null) ...[
+                    const SizedBox(height: 12),
+                    TextField(controller: _initial, keyboardType: TextInputType.number, decoration: field('Stock initial')),
+                  ],
+                  SwitchListTile(contentPadding: EdgeInsets.zero, value: _active, title: const Text('Actif'), onChanged: (value) => setState(() => _active = value)),
+                  SwitchListTile(contentPadding: EdgeInsets.zero, value: _recipe, title: const Text('Recette'), onChanged: (value) => setState(() => _recipe = value)),
               if (_recipe)
                 TextButton(onPressed: _addIngredient, child: const Text('Ajouter un ingrédient')),
               for (final item in _recipeItems)
@@ -613,14 +666,24 @@ class _ProductEditorState extends State<_ProductEditor> {
                   onTap: () => _editGroup(index),
                   trailing: IconButton(icon: const Icon(Icons.close), onPressed: () => setState(() => _groups.removeAt(index))),
                 ),
-            ],
-          ),
+                ],
+              ),
+            ),
+            const Divider(height: 1),
+            Padding(
+              padding: const EdgeInsets.all(12),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  TextButton(onPressed: () => Navigator.pop(context), child: const Text('Annuler')),
+                  const SizedBox(width: 8),
+                  FilledButton(onPressed: _save, child: const Text('Enregistrer')),
+                ],
+              ),
+            ),
+          ],
         ),
       ),
-      actions: [
-        TextButton(onPressed: () => Navigator.pop(context), child: const Text('Annuler')),
-        FilledButton(onPressed: _save, child: const Text('Enregistrer')),
-      ],
     );
   }
 }
