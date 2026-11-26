@@ -331,29 +331,122 @@ class _DeliveriesScreenState extends ConsumerState<DeliveriesScreen> {
     return rowMatches(delivery, _query, const ['customer_name', 'customer_phone', 'address', 'public_ref', 'zone_name']);
   }
 
-  List<Widget> _driverTotals() {
-    final delivered = _items.where((delivery) => '${delivery['status']}' == 'delivered').toList();
-    final byDriver = <String, List<Map<String, dynamic>>>{};
-    for (final delivery in delivered) {
-      final driver = delivery['driver'];
-      final name = driver is Map ? '${driver['name'] ?? 'Livreur'}' : '${delivery['driver_name'] ?? 'Non assigné'}';
-      byDriver.putIfAbsent(name, () => []).add(delivery);
+  String _driverName(Map<String, dynamic> delivery) {
+    final driver = delivery['driver'];
+    if (driver is Map && '${driver['name'] ?? ''}'.trim().isNotEmpty) return '${driver['name']}';
+    final name = '${delivery['driver_name'] ?? ''}'.trim();
+    return name.isEmpty ? 'Non assigné' : name;
+  }
+
+  String _driverKey(Map<String, dynamic> delivery) {
+    final driver = delivery['driver'];
+    final id = driver is Map ? driver['id'] : delivery['driver_id'];
+    if (id != null && '$id'.isNotEmpty) return 'id:$id';
+    return 'name:${_driverName(delivery)}';
+  }
+
+  Map<String, List<Map<String, dynamic>>> _byDriver(List<Map<String, dynamic>> rows) {
+    final grouped = <String, List<Map<String, dynamic>>>{};
+    for (final delivery in rows) {
+      grouped.putIfAbsent(_driverKey(delivery), () => []).add(delivery);
     }
-    if (byDriver.isEmpty) return const [];
-    return [
-      const SizedBox(height: 8),
-      const Text('À encaisser des livreurs', style: TextStyle(fontWeight: FontWeight.w800)),
-      for (final entry in byDriver.entries)
-        ListTile(
-          dense: true,
-          title: Text(entry.key),
-          subtitle: Text('${entry.value.length} livrée(s) · ${entry.value.where((item) => !_settled(item)).length} à payer'),
-          trailing: Text(
-            posMoney(entry.value.where((item) => !_settled(item)).fold<num>(0, (sum, item) => sum + _amount(item)).toDouble()),
-            style: const TextStyle(fontWeight: FontWeight.w800),
+    return grouped;
+  }
+
+  Future<void> _openDriver(String name, List<Map<String, dynamic>> orders) async {
+    final unpaid = orders.where((item) => !_settled(item)).toList();
+    await showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(name, style: const TextStyle(fontWeight: FontWeight.w800)),
+        content: SizedBox(
+          width: 460,
+          child: unpaid.isEmpty
+              ? const Text('Aucune commande à encaisser.')
+              : ListView(
+                  shrinkWrap: true,
+                  children: [
+                    for (final delivery in unpaid)
+                      ListTile(
+                        contentPadding: EdgeInsets.zero,
+                        title: Text('${delivery['customer_name'] ?? 'Commande'}', style: const TextStyle(fontWeight: FontWeight.w800)),
+                        subtitle: Text('${delivery['address'] ?? ''} · ${delivery['customer_phone'] ?? ''}'),
+                        trailing: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          crossAxisAlignment: CrossAxisAlignment.end,
+                          children: [
+                            Text(posMoney(_amount(delivery)), style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 16)),
+                            if (_manage) const Text('Marquer payé', style: TextStyle(color: PosColors.accent, fontWeight: FontWeight.w800)),
+                          ],
+                        ),
+                        onTap: _manage
+                            ? () {
+                                Navigator.pop(context);
+                                _markPaid(delivery);
+                              }
+                            : null,
+                      ),
+                  ],
+                ),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Annuler')),
+        ],
+      ),
+    );
+  }
+
+  Widget _driverBoard() {
+    final grouped = _byDriver(_items.where((delivery) => '${delivery['status']}' == 'delivered').toList());
+    if (grouped.isEmpty) return const SizedBox.shrink();
+    final keys = grouped.keys.toList();
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final columns = constraints.maxWidth > 720 ? 3 : 2;
+        final width = (constraints.maxWidth - (columns - 1) * 8) / columns;
+        return Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            for (final key in keys)
+              SizedBox(
+                width: width,
+                child: _driverCard(_driverName(grouped[key]!.first), grouped[key]!),
+              ),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _driverCard(String name, List<Map<String, dynamic>> orders) {
+    final unpaid = orders.where((item) => !_settled(item)).toList();
+    final amount = unpaid.fold<num>(0, (sum, item) => sum + _amount(item));
+    final count = unpaid.length;
+    return Material(
+      color: Colors.white,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(14),
+        side: BorderSide(color: count == 0 ? PosColors.line : PosColors.accent.withValues(alpha: 0.45)),
+      ),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(14),
+        onTap: () => _openDriver(name, orders),
+        child: Padding(
+          padding: const EdgeInsets.all(14),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(name, maxLines: 2, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w800)),
+              const SizedBox(height: 8),
+              Text(posMoney(amount), style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w800, color: PosColors.accent)),
+              const SizedBox(height: 4),
+              Text(count == 1 ? '1 commande' : '$count commandes', style: const TextStyle(color: PosColors.muted, fontWeight: FontWeight.w700)),
+            ],
           ),
         ),
-    ];
+      ),
+    );
   }
 
   Future<void> _call(String phone) async {
@@ -491,13 +584,17 @@ class _DeliveriesScreenState extends ConsumerState<DeliveriesScreen> {
       children: [
         _searchBar(),
         Text('Dû ${posMoney(due)} · Payé ${posMoney(paid)} · Reste ${posMoney(due)}', style: const TextStyle(fontWeight: FontWeight.w800)),
-        if (_manage) ..._driverTotals(),
+        const SizedBox(height: 10),
+        if (!_showPaid) _driverBoard(),
+        if (!_showPaid && _due.isEmpty)
+          const Padding(padding: EdgeInsets.only(top: 8), child: Text('Rien à régler.', style: TextStyle(color: PosColors.muted))),
         Align(
           alignment: Alignment.centerLeft,
           child: TextButton(onPressed: () => setState(() => _showPaid = !_showPaid), child: Text(_showPaid ? 'File de travail' : 'Payées')),
         ),
-        if (rows.isEmpty) Text(_showPaid ? 'Aucune commande payée.' : 'Rien à régler.', style: const TextStyle(color: PosColors.muted)),
-        for (final delivery in rows) _card(delivery, pay: !_showPaid),
+        if (rows.isEmpty && _showPaid) const Text('Aucune commande payée.', style: TextStyle(color: PosColors.muted)),
+        if (_showPaid)
+          for (final delivery in rows) _card(delivery),
       ],
     );
   }

@@ -5,6 +5,7 @@ import 'package:uuid/uuid.dart';
 
 import '../api/api_client.dart';
 import '../api/api_error.dart';
+import '../db/list_cache.dart';
 import '../providers/app_providers.dart';
 import '../theme/pos_theme.dart';
 import '../widgets/match_text.dart';
@@ -152,6 +153,7 @@ class _PosScreenState extends ConsumerState<PosScreen> {
       _payment = '${settings['pos.default_payment_method'] ?? 'cash'}';
       _loading = false;
     });
+    await _loadZones();
   }
 
   Future<void> _reloadCash() async {
@@ -274,10 +276,16 @@ class _PosScreenState extends ConsumerState<PosScreen> {
   }
 
   Future<void> _loadZones() async {
+    final store = ref.read(localStoreProvider);
+    final cached = await loadList(store, 'zones_cache');
+    final remembered = cached.where((zone) => zone['is_active'] != false).toList();
+    if (mounted && remembered.isNotEmpty) setState(() => _zones = remembered);
     try {
       final response = await ref.read(dioProvider).get('/api/v1/delivery-zones');
-      final zones = apiList(response.data).where((zone) => zone['is_active'] != false).toList();
-      if (mounted) setState(() => _zones = zones);
+      final zones = apiList(response.data);
+      await saveList(store, 'zones_cache', zones);
+      final active = zones.where((zone) => zone['is_active'] != false).toList();
+      if (mounted) setState(() => _zones = active);
     } catch (_) {}
   }
 

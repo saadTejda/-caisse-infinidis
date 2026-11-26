@@ -1191,7 +1191,10 @@ class _DeliveryWizardState extends State<_DeliveryWizard> {
 
   Widget _zones() {
     if (widget.zones.isEmpty) {
-      return const Text('Aucune zone active.', style: TextStyle(color: PosColors.muted));
+      return const Text(
+        'Aucune zone enregistrée. Ouvrez la caisse une fois en ligne pour les synchroniser.',
+        style: TextStyle(color: PosColors.muted),
+      );
     }
     return Column(
       children: [
