@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../api/api_client.dart';
 import '../api/api_error.dart';
+import '../providers/app_providers.dart';
 import '../theme/pos_theme.dart';
 
 class OrdersScreen extends ConsumerStatefulWidget {
@@ -47,12 +48,40 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
       final data = apiMap(response.data);
       await showDialog<void>(
         context: context,
-        builder: (context) => _TicketDialog(order: data.isEmpty ? order : data),
+        builder: (context) => _TicketDialog(
+          order: data.isEmpty ? order : data,
+          onPrint: () => _reprint(data.isEmpty ? order : data),
+        ),
       );
     } on DioException catch (error) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(apiMessage(error))));
     }
+  }
+
+  Future<void> _reprint(Map<String, dynamic> order) async {
+    final settings = await ref.read(syncServiceProvider).settings();
+    final items = order['items'] is List ? order['items'] as List : const [];
+    final lines = <Map<String, dynamic>>[
+      for (final raw in items)
+        if (raw is Map)
+          {
+            'name': raw['name'],
+            'quantity': raw['quantity'],
+            'line_total': raw['line_total'],
+          },
+    ];
+    await ref.read(printServiceProvider).printSale(
+          settings: settings,
+          publicRef: '${order['public_ref'] ?? order['id'] ?? ''}',
+          cartLines: lines,
+          total: '${order['total'] ?? ''}',
+          orderType: '${order['type'] ?? ''}',
+          kitchen: false,
+          openDrawer: false,
+        );
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Ticket renvoyé à l’imprimante.')));
   }
 
   @override
@@ -111,9 +140,10 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
 }
 
 class _TicketDialog extends StatelessWidget {
-  const _TicketDialog({required this.order});
+  const _TicketDialog({required this.order, required this.onPrint});
 
   final Map<String, dynamic> order;
+  final VoidCallback onPrint;
 
   @override
   Widget build(BuildContext context) {
@@ -149,7 +179,13 @@ class _TicketDialog extends StatelessWidget {
             const SizedBox(height: 12),
             Align(
               alignment: Alignment.centerRight,
-              child: FilledButton(onPressed: () => Navigator.pop(context), child: const Text('Fermer')),
+              child: Wrap(
+                spacing: 8,
+                children: [
+                  OutlinedButton(onPressed: onPrint, child: const Text('Réimprimer')),
+                  FilledButton(onPressed: () => Navigator.pop(context), child: const Text('Fermer')),
+                ],
+              ),
             ),
           ],
         ),

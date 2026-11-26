@@ -139,6 +139,8 @@ class PrintService with WidgetsBindingObserver {
     required String orderType,
     String? kitchenNote,
     String? taxLine,
+    bool openDrawer = false,
+    bool kitchen = true,
   }) async {
     final businessName = '${settings['business.name'] ?? 'Caisse'}';
     final footer = '${settings['business.ticket_footer'] ?? ''}';
@@ -155,25 +157,17 @@ class PrintService with WidgetsBindingObserver {
       'TOTAL: $total',
     ];
 
-    final local = await _localPrinters();
-    final autoPrint = settings['pos.auto_print'] == true ||
-        settings['pos.auto_print'] == 1 ||
-        settings['pos.auto_print'] == '1' ||
-        settings['pos.auto_print'] == 'true';
-    final localReceipt = local?['receipt'];
-    if (localReceipt != null) {
-      if (localReceipt.enabled && localReceipt.autoPrint) {
-        await _sendQuiet(() => _sendLocal(localReceipt, _localTicket(localReceipt, title: businessName, lines: receiptLines, footer: footer, reference: publicRef)));
-      }
-    } else if (autoPrint) {
-      final receipt = PrinterConfig.fromSettings(settings, 'receipt_printer');
-      final receiptBytes = buildTicket(
-        title: businessName,
-        lines: receiptLines,
-        paperWidth: receipt.paperWidth,
-        footer: footer,
-      );
-      await _sendQuiet(() => send(receipt, receiptBytes));
+    final receipt = await _printerFor('receipt', settings);
+    final autoPrint = receipt?.autoPrint ??
+        (settings['pos.auto_print'] == true ||
+            settings['pos.auto_print'] == 1 ||
+            settings['pos.auto_print'] == '1' ||
+            settings['pos.auto_print'] == 'true');
+    if (receipt != null && receipt.enabled && autoPrint) {
+      await _sendQuiet(() => _sendLocal(receipt, _localTicket(receipt, title: businessName, lines: receiptLines, footer: footer, reference: publicRef)));
+    }
+    if (openDrawer && receipt != null && receipt.enabled && receipt.drawer) {
+      await _sendQuiet(() => _pulseDrawer(receipt));
     }
 
     final kitchenLines = <String>[
@@ -184,36 +178,61 @@ class PrintService with WidgetsBindingObserver {
       if (kitchenNote != null && kitchenNote.trim().isNotEmpty) 'Note: $kitchenNote',
     ];
 
+    if (!kitchen) return;
     final count = int.tryParse('${settings['pos.kitchen_printers_count'] ?? '1'}') ?? 1;
-    final slots = <String>['kitchen_printer_1'];
-    if (count >= 2) {
-      slots.add('kitchen_printer_2');
-    }
-    for (final slot in slots) {
-      final role = slot == 'kitchen_printer_1' ? 'kitchen1' : 'kitchen2';
-      final localKitchen = local?[role];
-      if (local != null) {
-        if (localKitchen != null && localKitchen.enabled) {
-          await _sendQuiet(
-            () => _sendLocal(
-              localKitchen,
-              _localTicket(
-                localKitchen,
-                title: localKitchen.deviceName.isEmpty ? 'Cuisine' : localKitchen.deviceName,
-                lines: kitchenLines,
-              ),
-            ),
-          );
-        }
-        continue;
-      }
-      final printer = PrinterConfig.fromSettings(settings, slot);
-      final bytes = buildTicket(
-        title: printer.name.isEmpty ? 'Cuisine' : printer.name,
-        lines: kitchenLines,
-        paperWidth: printer.paperWidth,
+    final roles = <String>['kitchen1'];
+    if (count >= 2) roles.add('kitchen2');
+    for (final role in roles) {
+      final printer = await _printerFor(role, settings);
+      if (printer == null || !printer.enabled) continue;
+      await _sendQuiet(
+        () => _sendLocal(
+          printer,
+          _localTicket(
+            printer,
+            title: 'Cuisine',
+            lines: kitchenLines,
+          ),
+        ),
       );
-      await _sendQuiet(() => send(printer, bytes));
+    }
+  }
+
+  Future<void> printMovement({
+    required Map<String, dynamic> settings,
+    required String label,
+    required String amount,
+    required String reason,
+    bool openDrawer = true,
+  }) async {
+    final receipt = await _printerFor('receipt', settings);
+    if (receipt == null || !receipt.enabled) return;
+    final ticket = TicketBuilder(receipt)..init();
+    ticket.text(label, alignTo: 'center', strong: true);
+    ticket.hr();
+    ticket.pair('Montant', amount);
+    ticket.wrap(reason);
+    ticket.feed(3);
+    if (receipt.cut) ticket.cut();
+    await _sendQuiet(() => _sendLocal(receipt, Uint8List.fromList(ticket.bytes)));
+    if (openDrawer && receipt.drawer) await _sendQuiet(() => _pulseDrawer(receipt));
+  }
+
+  Future<TicketPrinter?> _printerFor(String role, Map<String, dynamic> settings) async {
+    final local = await _localPrinters();
+    if (local != null) return local[role];
+    final seeded = TicketPrinter.fromServer(settings, role);
+    if (!seeded.enabled || !seeded.ready) return null;
+    return seeded;
+  }
+
+  Future<void> _pulseDrawer(TicketPrinter printer) async {
+    final ticket = TicketBuilder(printer)..init();
+    ticket.drawer();
+    if (printer.connection == 'bluetooth') {
+      await _sendBluetooth(printer.address, Uint8List.fromList(ticket.bytes), useOverride: false);
+    } else {
+      await _sendWifi(printer.host, printer.port, Uint8List.fromList(ticket.bytes));
     }
   }
 

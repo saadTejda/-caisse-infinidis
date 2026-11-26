@@ -85,6 +85,8 @@ class TicketBuilder {
 
   void feed(int lines) => bytes.addAll([_esc, 0x64, lines]);
 
+  void drawer() => bytes.addAll([_esc, 0x70, config.drawerPin == 1 ? 0x01 : 0x00, 0x19, 0xFA]);
+
   void cut() {
     switch (config.cutMode) {
       case 'full':

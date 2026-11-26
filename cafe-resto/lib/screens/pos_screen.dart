@@ -456,6 +456,7 @@ class _PosScreenState extends ConsumerState<PosScreen> {
               orderType: _orderType,
               kitchenNote: note.isEmpty ? null : note,
               taxLine: order is Map && order['tax_enabled'] == true ? 'TVA ${order['tax_total']}' : null,
+              openDrawer: _payment == 'cash',
             );
       } catch (_) {
         // Impression best-effort.

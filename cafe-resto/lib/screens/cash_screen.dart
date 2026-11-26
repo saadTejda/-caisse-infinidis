@@ -144,15 +144,28 @@ class _CashScreenState extends ConsumerState<CashScreen> {
       return;
     }
     setState(() => _busy = true);
+    final label = _movementType == 'cash_out'
+        ? 'Sortie de caisse'
+        : _movementType == 'expense'
+            ? 'Dépense'
+            : 'Entrée de caisse';
+    final reason = _movementReason.text.trim();
     try {
       await ref.read(dioProvider).post(
         '/api/v1/cash/sessions/$id/movements',
         data: {
           'type': _movementType,
           'amount': amount,
-          'reason': _movementReason.text.trim(),
+          'reason': reason,
         },
       );
+      final settings = await ref.read(syncServiceProvider).settings();
+      await ref.read(printServiceProvider).printMovement(
+            settings: settings,
+            label: label,
+            amount: amount.toStringAsFixed(2),
+            reason: reason,
+          );
       _movementAmount.clear();
       _movementReason.clear();
       await _load();
