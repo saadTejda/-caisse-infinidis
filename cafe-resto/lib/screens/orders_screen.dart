@@ -45,27 +45,44 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
     }
   }
 
+  int? _orderId(Map<String, dynamic> order) => int.tryParse('${order['id']}');
+
   Future<void> _open(Map<String, dynamic> order) async {
-    final id = order['id'] ?? order['public_ref'];
+    final id = _orderId(order);
+    if (id == null) {
+      await _showTicket(order);
+      return;
+    }
     try {
       final response = await ref.read(dioProvider).get('/api/v1/orders/$id');
       if (!mounted) return;
       final data = apiMap(response.data);
-      await showDialog<void>(
-        context: context,
-        builder: (context) => _TicketDialog(
-          order: data.isEmpty ? order : data,
-          onPrint: () => _reprint(data.isEmpty ? order : data),
-          canChange: widget.user.can('orders.update') || widget.user.can('orders.manage'),
-          canCancel: widget.user.can('orders.cancel') || widget.user.can('orders.manage'),
-          onChange: () => _change(data.isEmpty ? order : data),
-          onCancel: () => _cancel(data.isEmpty ? order : data),
-        ),
-      );
+      await _showTicket(data.isEmpty ? order : data);
     } on DioException catch (error) {
       if (!mounted) return;
+      if (error.response?.statusCode == 404) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Cette commande n’existe pas sur le serveur.')),
+        );
+        await _showTicket(order);
+        return;
+      }
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(apiMessage(error))));
     }
+  }
+
+  Future<void> _showTicket(Map<String, dynamic> order) {
+    return showDialog<void>(
+      context: context,
+      builder: (context) => _TicketDialog(
+        order: order,
+        onPrint: () => _reprint(order),
+        canChange: _orderId(order) != null && (widget.user.can('orders.update') || widget.user.can('orders.manage')),
+        canCancel: _orderId(order) != null && (widget.user.can('orders.cancel') || widget.user.can('orders.manage')),
+        onChange: () => _change(order),
+        onCancel: () => _cancel(order),
+      ),
+    );
   }
 
   Future<void> _reprint(Map<String, dynamic> order) async {
@@ -94,7 +111,7 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
   }
 
   Future<void> _change(Map<String, dynamic> order) async {
-    final id = order['id'];
+    final id = _orderId(order);
     if (id == null) return;
     final items = order['items'] is List ? order['items'] as List : const [];
     final lines = <Map<String, dynamic>>[
@@ -144,7 +161,7 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
   }
 
   Future<void> _cancel(Map<String, dynamic> order) async {
-    final id = order['id'];
+    final id = _orderId(order);
     if (id == null) return;
     final ok = await showDialog<bool>(
       context: context,

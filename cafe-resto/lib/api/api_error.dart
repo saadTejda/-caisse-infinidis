@@ -26,7 +26,8 @@ bool _genericMessage(String message) {
   final lower = message.toLowerCase();
   return lower == 'not found' ||
       lower == 'server error' ||
-      lower.contains('could not be found');
+      lower.contains('could not be found') ||
+      lower.contains('no query results');
 }
 
 List<Map<String, dynamic>> apiList(dynamic body) {
