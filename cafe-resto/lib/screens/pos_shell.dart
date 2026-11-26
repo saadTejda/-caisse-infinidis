@@ -126,7 +126,13 @@ class _PosShellState extends ConsumerState<PosShell> {
 
   @override
   Widget build(BuildContext context) {
+    ref.listen(onlineProvider, (previous, next) {
+      final was = previous?.valueOrNull ?? false;
+      final now = next.valueOrNull ?? false;
+      if (now && !was) _sync();
+    });
     final code = ref.watch(localeCodeProvider);
+    final online = ref.watch(onlineProvider).valueOrNull;
     final modules = _modulesFor(_user);
     if (modules.isEmpty) {
       return Scaffold(
@@ -172,6 +178,7 @@ class _PosShellState extends ConsumerState<PosShell> {
           Expanded(
             child: Column(
               children: [
+                _linkBar(online),
                 _printerStatus(),
                 Expanded(child: _module == 'pos' ? _body(modules) : SafeArea(child: _body(modules))),
               ],
@@ -179,6 +186,16 @@ class _PosShellState extends ConsumerState<PosShell> {
           ),
         ],
       ),
+    );
+  }
+
+  Widget _linkBar(bool? online) {
+    final label = online == null ? 'Vérification du serveur…' : (online ? 'En ligne' : 'Hors ligne');
+    final color = online == true ? PosColors.success : (online == false ? PosColors.danger : PosColors.muted);
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+      child: Text(label, style: TextStyle(color: color, fontSize: 12, fontWeight: FontWeight.w800)),
     );
   }
 
@@ -209,7 +226,7 @@ class _PosShellState extends ConsumerState<PosShell> {
       return Center(child: Text(tx(code, 'no_module')));
     }
     return switch (_module) {
-      'orders' => const OrdersScreen(),
+      'orders' => OrdersScreen(user: _user),
       'cash' => const CashScreen(),
       'dashboard' => const DashboardScreen(),
       'delivery' => DeliveriesScreen(user: _user),

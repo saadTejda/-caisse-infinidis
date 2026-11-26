@@ -374,6 +374,15 @@ class _PosScreenState extends ConsumerState<PosScreen> {
       setState(() => _error = 'Panier vide.');
       return;
     }
+    final online = ref.read(onlineProvider).valueOrNull ?? false;
+    if (!online && _orderType == 'delivery') {
+      setState(() => _error = 'La livraison nécessite le serveur. Choisissez sur place ou à emporter.');
+      return;
+    }
+    if (!online && _salesBlocked) {
+      setState(() => _error = 'Connectez-vous pour ouvrir la caisse. Hors ligne, seule une caisse déjà ouverte peut vendre.');
+      return;
+    }
     if (_payment == 'cash' && _salesBlocked) {
       setState(() => _error = 'Ouvrez le tiroir pour encaisser en espèces.');
       return;
@@ -396,7 +405,6 @@ class _PosScreenState extends ConsumerState<PosScreen> {
       _loading = true;
     });
 
-    final online = ref.read(onlineProvider).valueOrNull ?? true;
     final key = const Uuid().v4();
     final payload = {
       'type': _orderType,
@@ -441,7 +449,11 @@ class _PosScreenState extends ConsumerState<PosScreen> {
       final totalStr = _total.toStringAsFixed(2);
       final note = _kitchenNote.text.trim();
 
-      String publicRef = result['offline'] == true ? 'OFF-$key'.substring(0, 12) : 'TICKET';
+      if (result['offline'] == true) {
+        final lines = (payload['lines'] as List).map((line) => Map<String, dynamic>.from(line as Map)).toList();
+        await ref.read(syncServiceProvider).adjustStock(lines, sign: -1);
+      }
+      String publicRef = result['offline'] == true ? '${result['local_ref'] ?? 'HL'}' : 'TICKET';
       final order = result['order'];
       if (order is Map && order['public_ref'] != null) {
         publicRef = '${order['public_ref']}';
@@ -526,6 +538,107 @@ class _PosScreenState extends ConsumerState<PosScreen> {
     );
   }
 
+  Future<void> _showPending() async {
+    final queue = ref.read(orderQueueProvider);
+    final items = await queue.pendingCount() == 0 ? <Map<String, dynamic>>[] : await ref.read(localStoreProvider).pendingOrders();
+    if (!mounted) return;
+    await showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Ventes en attente'),
+        content: SizedBox(
+          width: 420,
+          child: items.isEmpty
+              ? const Text('Aucune vente en attente.')
+              : ListView(
+                  shrinkWrap: true,
+                  children: [
+                    for (final item in items)
+                      ListTile(
+                        title: Text('${item['id']}'.substring(0, 8)),
+                        subtitle: Text('${item['last_error'] ?? 'Pas encore envoyée'}'),
+                        trailing: Wrap(
+                          spacing: 4,
+                          children: [
+                            TextButton(onPressed: () => _editPending(item), child: const Text('Modifier')),
+                            TextButton(onPressed: () => _dropPending(item), child: const Text('Supprimer')),
+                          ],
+                        ),
+                      ),
+                  ],
+                ),
+        ),
+        actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('Fermer'))],
+      ),
+    );
+  }
+
+  Future<void> _editPending(Map<String, dynamic> item) async {
+    final payload = Map<String, dynamic>.from(item['payload'] as Map);
+    final lines = (payload['lines'] as List?)?.map((line) => Map<String, dynamic>.from(line as Map)).toList() ?? [];
+    final saved = await showDialog<bool>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setLocal) => AlertDialog(
+          title: const Text('Modifier avant envoi'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              for (final line in lines)
+                Row(
+                  children: [
+                    Expanded(child: Text('Produit ${line['product_id']}')),
+                    IconButton(
+                      onPressed: () => setLocal(() => line['quantity'] = (num.tryParse('${line['quantity']}') ?? 1) - 1),
+                      icon: const Icon(Icons.remove),
+                    ),
+                    Text('${line['quantity']}'),
+                    IconButton(
+                      onPressed: () => setLocal(() => line['quantity'] = (num.tryParse('${line['quantity']}') ?? 0) + 1),
+                      icon: const Icon(Icons.add),
+                    ),
+                  ],
+                ),
+            ],
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Annuler')),
+            FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('Enregistrer')),
+          ],
+        ),
+      ),
+    );
+    if (saved != true) return;
+    final kept = lines.where((line) => (num.tryParse('${line['quantity']}') ?? 0) > 0).toList();
+    payload['lines'] = kept;
+    await ref.read(orderQueueProvider).updatePending('${item['id']}', payload);
+    if (mounted) Navigator.of(context).pop();
+    await widget.onCheckoutDone?.call();
+  }
+
+  Future<void> _dropPending(Map<String, dynamic> item) async {
+    final payload = Map<String, dynamic>.from(item['payload'] as Map);
+    final lines = (payload['lines'] as List?)?.map((line) => Map<String, dynamic>.from(line as Map)).toList() ?? [];
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Supprimer cette vente'),
+        content: const Text('Elle ne sera pas envoyée. Le stock local de ces articles sera remis.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Annuler')),
+          FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('Supprimer')),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    if ('${payload['_op'] ?? 'sale'}' == 'sale') {
+      await ref.read(syncServiceProvider).adjustStock(lines, sign: 1);
+    }
+    await ref.read(orderQueueProvider).deletePending('${item['id']}');
+    if (mounted) Navigator.of(context).pop();
+    await widget.onCheckoutDone?.call();
+  }
+
   Widget _header() {
     return Material(
       color: Colors.white,
@@ -562,11 +675,14 @@ class _PosScreenState extends ConsumerState<PosScreen> {
                     'Carte',
                     style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800, color: PosColors.ink),
                   ),
-                  Text(
-                    widget.pendingCount > 0
-                        ? '${widget.userName} · ${widget.pendingCount} en attente'
-                        : widget.userName,
-                    style: const TextStyle(fontSize: 12, color: PosColors.muted),
+                  TextButton(
+                    onPressed: widget.pendingCount > 0 ? _showPending : null,
+                    child: Text(
+                      widget.pendingCount > 0
+                          ? '${widget.userName} · ${widget.pendingCount} en attente'
+                          : widget.userName,
+                      style: const TextStyle(fontSize: 12, color: PosColors.muted),
+                    ),
                   ),
                 ],
               ),
@@ -1124,7 +1240,7 @@ class _ReceiptDialog extends StatelessWidget {
             if (shownLogo.isNotEmpty)
               Image.network(shownLogo, height: 56, errorBuilder: (context, error, stack) => const SizedBox.shrink()),
             Text('${business['name'] ?? businessName}', style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w800)),
-            Text(offline ? 'Enregistrée hors ligne' : '${order?['public_ref'] ?? ''}'),
+            Text(offline ? 'Vente enregistrée hors ligne. Elle partira au retour du réseau.' : '${order?['public_ref'] ?? ''}'),
             const Divider(),
             for (final raw in items)
               if (raw is Map)

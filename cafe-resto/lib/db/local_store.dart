@@ -88,6 +88,27 @@ class LocalStore {
     await database.delete('pending_orders', where: 'id = ?', whereArgs: [id]);
   }
 
+  Future<int> nextOfflineNumber() async {
+    final current = await getJson('offline_seq');
+    final next = (current is int ? current : int.tryParse('$current') ?? 0) + 1;
+    await putJson('offline_seq', next);
+    return next;
+  }
+
+  Future<void> updatePending(String id, Map<String, dynamic> payload) async {
+    final database = await db;
+    await database.update(
+      'pending_orders',
+      {
+        'payload': jsonEncode(payload),
+        'created_at': DateTime.now().toUtc().toIso8601String(),
+        'last_error': null,
+      },
+      where: 'id = ?',
+      whereArgs: [id],
+    );
+  }
+
   Future<void> bumpPending(String id, String error) async {
     final database = await db;
     await database.rawUpdate(

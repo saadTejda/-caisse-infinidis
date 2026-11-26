@@ -78,7 +78,7 @@ class _CashScreenState extends ConsumerState<CashScreen> {
   Future<void> _load() async {
     final online = ref.read(onlineProvider).valueOrNull ?? true;
     if (!online) {
-      setState(() => _error = 'Tiroir : connexion requise.');
+      setState(() => _error = 'Connectez-vous pour lire la caisse. Le serveur ne répond pas.');
       return;
     }
     setState(() {
@@ -118,7 +118,7 @@ class _CashScreenState extends ConsumerState<CashScreen> {
   Future<void> _open() async {
     final online = ref.read(onlineProvider).valueOrNull ?? true;
     if (!online) {
-      setState(() => _error = 'Ouverture caisse impossible hors-ligne.');
+      setState(() => _error = 'Connectez-vous pour ouvrir la caisse. Le serveur ne répond pas.');
       return;
     }
     setState(() => _busy = true);
@@ -136,6 +136,11 @@ class _CashScreenState extends ConsumerState<CashScreen> {
   }
 
   Future<void> _move() async {
+    final online = ref.read(onlineProvider).valueOrNull ?? false;
+    if (!online) {
+      setState(() => _error = 'Connectez-vous pour enregistrer un mouvement. Le serveur ne répond pas.');
+      return;
+    }
     final id = _session?['id'] ?? _session?['session']?['id'];
     if (id == null) return;
     final amount = double.tryParse(_movementAmount.text.replaceAll(',', '.')) ?? 0;
@@ -181,7 +186,13 @@ class _CashScreenState extends ConsumerState<CashScreen> {
     if (id == null) return;
     final online = ref.read(onlineProvider).valueOrNull ?? true;
     if (!online) {
-      setState(() => _error = 'Fermeture caisse impossible hors-ligne.');
+      setState(() => _error = 'Connectez-vous pour fermer la caisse. Le serveur ne répond pas.');
+      return;
+    }
+    await ref.read(orderQueueProvider).flush();
+    final waiting = await ref.read(orderQueueProvider).pendingCount();
+    if (waiting > 0) {
+      setState(() => _error = 'Il reste des ventes à envoyer ou en erreur. Synchronisez avant de fermer la caisse.');
       return;
     }
     setState(() => _busy = true);

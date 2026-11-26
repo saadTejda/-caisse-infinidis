@@ -17,12 +17,7 @@ class OrderQueue {
     body['client_created_at'] = body['client_created_at'] ?? DateTime.now().toUtc().toIso8601String();
 
     if (!online) {
-      await _store.enqueueOrder(idempotencyKey, body, body['client_created_at'] as String);
-      return {
-        'offline': true,
-        'idempotency_key': idempotencyKey,
-        'order': null,
-      };
+      return _park(idempotencyKey, body);
     }
 
     try {
@@ -38,15 +33,38 @@ class OrderQueue {
       };
     } on DioException catch (error) {
       if (_isNetworkError(error)) {
-        await _store.enqueueOrder(idempotencyKey, body, body['client_created_at'] as String);
-        return {
-          'offline': true,
-          'idempotency_key': idempotencyKey,
-          'order': null,
-        };
+        return _park(idempotencyKey, body);
       }
       rethrow;
     }
+  }
+
+  Future<Map<String, dynamic>> _park(String key, Map<String, dynamic> body) async {
+    await _store.enqueueOrder(key, body, body['client_created_at'] as String);
+    final number = await _store.nextOfflineNumber();
+    return {
+      'offline': true,
+      'idempotency_key': key,
+      'local_ref': 'HL-${number.toString().padLeft(5, '0')}',
+      'order': null,
+    };
+  }
+
+  Future<void> enqueueOperation(String id, Map<String, dynamic> payload) async {
+    await _store.enqueueOrder(id, payload, DateTime.now().toUtc().toIso8601String());
+  }
+
+  Future<void> updatePending(String id, Map<String, dynamic> payload) async {
+    await _store.updatePending(id, payload);
+  }
+
+  Future<void> deletePending(String id) async {
+    await _store.removePending(id);
+  }
+
+  Future<int> errorCount() async {
+    final pending = await _store.pendingOrders();
+    return pending.where((item) => '${item['last_error'] ?? ''}'.isNotEmpty).length;
   }
 
   Future<int> flush() async {
@@ -55,9 +73,16 @@ class OrderQueue {
     for (final item in pending) {
       final id = item['id'] as String;
       final payload = Map<String, dynamic>.from(item['payload'] as Map);
+      final op = '${payload.remove('_op') ?? 'sale'}';
+      final orderId = payload.remove('_order_id');
       try {
+        final path = switch (op) {
+          'sale_update' => '/api/v1/orders/$orderId/changes',
+          'sale_cancel' => '/api/v1/orders/$orderId/cancel',
+          _ => '/api/v1/orders',
+        };
         await _dio.post(
-          '/api/v1/orders',
+          path,
           data: payload,
           options: Options(headers: {'Idempotency-Key': id}),
         );
@@ -71,6 +96,10 @@ class OrderQueue {
           continue;
         }
         // Idempotent replay conflict with same key should still clear.
+        if (status == 404 || status == 405) {
+          await _store.bumpPending(id, 'Le serveur ne connaît pas encore cette opération.');
+          continue;
+        }
         if (status == 409 || status == 422 && _looksLikeReplay(error)) {
           await _store.removePending(id);
           synced++;

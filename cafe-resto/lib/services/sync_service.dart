@@ -66,6 +66,24 @@ class SyncService {
     };
   }
 
+  Future<void> adjustStock(List<Map<String, dynamic>> lines, {required int sign}) async {
+    final raw = await catalog();
+    final products = raw.map((item) => item is Map ? Map<String, dynamic>.from(item) : <String, dynamic>{}).toList();
+    for (final line in lines) {
+      final id = '${line['product_id']}';
+      final qty = num.tryParse('${line['quantity']}') ?? 0;
+      for (final product in products) {
+        if ('${product['id']}' != id) continue;
+        for (final key in const ['stock', 'stock_on_hand', 'quantity_on_hand']) {
+          final current = num.tryParse('${product[key]}');
+          if (current == null) continue;
+          product[key] = current + (sign * qty);
+        }
+      }
+    }
+    await _store.putJson('catalog', products);
+  }
+
   Future<void> refreshCashStatus() async {
     final response = await _dio.get('/api/v1/pos/cash-status');
     final data = Map<String, dynamic>.from(response.data['data'] as Map);

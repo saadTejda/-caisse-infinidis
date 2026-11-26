@@ -2,13 +2,18 @@ import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import 'package:uuid/uuid.dart';
+
 import '../api/api_client.dart';
 import '../api/api_error.dart';
+import '../auth/staff_user.dart';
 import '../providers/app_providers.dart';
 import '../theme/pos_theme.dart';
 
 class OrdersScreen extends ConsumerStatefulWidget {
-  const OrdersScreen({super.key});
+  const OrdersScreen({super.key, this.user = StaffUser.empty});
+
+  final StaffUser user;
 
   @override
   ConsumerState<OrdersScreen> createState() => _OrdersScreenState();
@@ -51,6 +56,10 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
         builder: (context) => _TicketDialog(
           order: data.isEmpty ? order : data,
           onPrint: () => _reprint(data.isEmpty ? order : data),
+          canChange: widget.user.can('orders.update') || widget.user.can('orders.manage'),
+          canCancel: widget.user.can('orders.cancel') || widget.user.can('orders.manage'),
+          onChange: () => _change(data.isEmpty ? order : data),
+          onCancel: () => _cancel(data.isEmpty ? order : data),
         ),
       );
     } on DioException catch (error) {
@@ -82,6 +91,111 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
         );
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Ticket renvoyé à l’imprimante.')));
+  }
+
+  Future<void> _change(Map<String, dynamic> order) async {
+    final id = order['id'];
+    if (id == null) return;
+    final items = order['items'] is List ? order['items'] as List : const [];
+    final lines = <Map<String, dynamic>>[
+      for (final raw in items)
+        if (raw is Map && raw['product_id'] != null)
+          {
+            'product_id': raw['product_id'],
+            'quantity': raw['quantity'],
+            'modifiers': raw['modifiers'] ?? [],
+          },
+    ];
+    if (lines.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Cette vente ne peut pas être modifiée depuis la tablette.')));
+      return;
+    }
+    final saved = await showDialog<bool>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setLocal) => AlertDialog(
+          title: const Text('Modifier la vente'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              for (final line in lines)
+                Row(
+                  children: [
+                    Expanded(child: Text('Produit ${line['product_id']}')),
+                    IconButton(onPressed: () => setLocal(() => line['quantity'] = (num.tryParse('${line['quantity']}') ?? 1) - 1), icon: const Icon(Icons.remove)),
+                    Text('${line['quantity']}'),
+                    IconButton(onPressed: () => setLocal(() => line['quantity'] = (num.tryParse('${line['quantity']}') ?? 0) + 1), icon: const Icon(Icons.add)),
+                  ],
+                ),
+            ],
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Annuler')),
+            FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('Envoyer')),
+          ],
+        ),
+      ),
+    );
+    if (saved != true) return;
+    await _sendOrderOp(orderId: '$id', op: 'sale_update', body: {
+      'lines': lines.where((line) => (num.tryParse('${line['quantity']}') ?? 0) > 0).toList(),
+      'payment_method': order['payment_method'] ?? 'cash',
+    }, waiting: 'Modification en attente. Elle partira au retour du réseau.');
+  }
+
+  Future<void> _cancel(Map<String, dynamic> order) async {
+    final id = order['id'];
+    if (id == null) return;
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Annuler la vente'),
+        content: const Text('La vente sera annulée sur le serveur. Ce n’est pas un simple oubli local.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Retour')),
+          FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('Annuler la vente')),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    await _sendOrderOp(orderId: '$id', op: 'sale_cancel', body: {'reason': 'Annulée depuis la caisse'}, waiting: 'Annulation en attente. Elle partira au retour du réseau.');
+  }
+
+  Future<void> _sendOrderOp({
+    required String orderId,
+    required String op,
+    required Map<String, dynamic> body,
+    required String waiting,
+  }) async {
+    final online = ref.read(onlineProvider).valueOrNull ?? false;
+    final key = const Uuid().v4();
+    if (!online) {
+      await ref.read(orderQueueProvider).enqueueOperation(key, {'_op': op, '_order_id': orderId, ...body});
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(waiting)));
+      return;
+    }
+    try {
+      final path = op == 'sale_cancel' ? '/api/v1/orders/$orderId/cancel' : '/api/v1/orders/$orderId/changes';
+      await ref.read(dioProvider).post(path, data: body, options: Options(headers: {'Idempotency-Key': key}));
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Opération enregistrée.')));
+      await _load();
+    } on DioException catch (error) {
+      if (error.response?.statusCode == 404 || error.response?.statusCode == 405) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Le serveur ne permet pas encore cette opération.')));
+        return;
+      }
+      if (error.type == DioExceptionType.connectionError || error.type == DioExceptionType.connectionTimeout) {
+        await ref.read(orderQueueProvider).enqueueOperation(key, {'_op': op, '_order_id': orderId, ...body});
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(waiting)));
+        return;
+      }
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(apiMessage(error))));
+    }
   }
 
   @override
@@ -140,10 +254,21 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
 }
 
 class _TicketDialog extends StatelessWidget {
-  const _TicketDialog({required this.order, required this.onPrint});
+  const _TicketDialog({
+    required this.order,
+    required this.onPrint,
+    required this.canChange,
+    required this.canCancel,
+    required this.onChange,
+    required this.onCancel,
+  });
 
   final Map<String, dynamic> order;
   final VoidCallback onPrint;
+  final bool canChange;
+  final bool canCancel;
+  final VoidCallback onChange;
+  final VoidCallback onCancel;
 
   @override
   Widget build(BuildContext context) {
@@ -183,6 +308,8 @@ class _TicketDialog extends StatelessWidget {
                 spacing: 8,
                 children: [
                   OutlinedButton(onPressed: onPrint, child: const Text('Réimprimer')),
+                  if (canChange) OutlinedButton(onPressed: onChange, child: const Text('Modifier')),
+                  if (canCancel) OutlinedButton(onPressed: onCancel, child: const Text('Annuler la vente')),
                   FilledButton(onPressed: () => Navigator.pop(context), child: const Text('Fermer')),
                 ],
               ),
